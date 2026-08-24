@@ -22,8 +22,19 @@ parkerstage/
 │   ├── parkerstage.urdf       # generated model (do not hand-edit)
 │   └── parkerstage.urdf.onshape  # original Onshape export (source of truth)
 ├── meshes/                # 10 STL files, referenced via package://parkerstage/meshes/...
+├── docs/
+│   └── kinematic_tree.svg # kinematic tree diagram (generated, see below)
 └── tools/                 # Python scripts (see "Regenerating assets" below)
 ```
+
+## Model diagram
+
+![kinematic tree](docs/kinematic_tree.svg)
+
+Kinematic skeleton of the compound stage: links as boxes, joints as labeled
+edges. Chains of fixed joints are grouped into assembly boxes (every link is
+still listed, in tree order) so the two prismatic slide joints — the only
+movable DOF — stand out. Regenerate with `python3 tools/make_tree_svg.py`.
 
 ## URDF model
 
@@ -139,6 +150,7 @@ and view-preset buttons for inspecting individual parts.
 | `tools/home_offset.py` | computes mid-stroke and home-limit switch positions from mesh geometry |
 | `tools/analyze_collision.py` | voxel cross-sections and interpenetration analysis of the CAD |
 | `tools/mesh_inertia.py` | volume / COM / inertia tensor from STL (voxel fill, shell-mesh safe) |
+| `tools/make_tree_svg.py` | generates `docs/kinematic_tree.svg` from the URDF |
 
 ## Caveats
 
