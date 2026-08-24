@@ -1,0 +1,10 @@
+# internal / agent workspace
+.freebuff/
+
+# generated build artifact (regenerate with: python3 tools/make_viewer.py)
+viewer.html
+
+# python / mac junk
+__pycache__/
+*.pyc
+.DS_Store

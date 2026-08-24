@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>parkerstage</name>
+  <version>0.1.0</version>
+  <description>
+    Parker 401200XR compound XY linear stage (2x 200 mm stroke, stacked).
+
+    Contains the URDF (two prismatic slide joints centered on the physical
+    mid-stroke, box collision geometry for Gazebo/MuJoCo, and mesh-derived
+    aluminum inertials), the STL meshes, and a launch file that brings up
+    robot_state_publisher, joint_state_publisher_gui and rviz.
+
+    The URDF references meshes via package://parkerstage/meshes/...
+  </description>
+  <maintainer email="dev@example.com">parkerstage maintainers</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- runtime: launch/parkerstage.launch -->
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rviz</exec_depend>
+</package>
