@@ -23,7 +23,8 @@ parkerstage/
 │   └── parkerstage.urdf.onshape  # original Onshape export (source of truth)
 ├── meshes/                # 10 STL files, referenced via package://parkerstage/meshes/...
 ├── docs/
-│   └── kinematic_tree.svg # kinematic tree diagram (generated, see below)
+│   ├── kinematic_tree.svg     # kinematic tree diagram (generated, see below)
+│   └── collision_geometry.svg # collision boxes + travel sweep (generated, see below)
 └── tools/                 # Python scripts (see "Regenerating assets" below)
 ```
 
@@ -31,10 +32,17 @@ parkerstage/
 
 ![kinematic tree](docs/kinematic_tree.svg)
 
-Kinematic skeleton of the compound stage: links as boxes, joints as labeled
-edges. Chains of fixed joints are grouped into assembly boxes (every link is
-still listed, in tree order) so the two prismatic slide joints — the only
-movable DOF — stand out. Regenerate with `python3 tools/make_tree_svg.py`.
+**Kinematic tree** — links as boxes, joints as labeled edges. Chains of fixed
+joints are grouped into assembly boxes (every link is still listed, in tree
+order) so the two prismatic slide joints — the only movable DOF — stand out.
+Regenerate with `python3 tools/make_tree_svg.py`.
+
+![collision geometry](docs/collision_geometry.svg)
+
+**Collision geometry** — the 20 collision boxes (color-coded by kinematic
+group) in a top view with the slide travel sweep, plus channel cross-sections
+A-A / B-B showing the 1 mm clearances, and a per-link box inventory.
+Regenerate with `python3 tools/make_collision_svg.py`.
 
 ## URDF model
 
@@ -151,6 +159,7 @@ and view-preset buttons for inspecting individual parts.
 | `tools/analyze_collision.py` | voxel cross-sections and interpenetration analysis of the CAD |
 | `tools/mesh_inertia.py` | volume / COM / inertia tensor from STL (voxel fill, shell-mesh safe) |
 | `tools/make_tree_svg.py` | generates `docs/kinematic_tree.svg` from the URDF |
+| `tools/make_collision_svg.py` | generates `docs/collision_geometry.svg` (boxes, sweep, sections) |
 
 ## Caveats
 
