@@ -3,9 +3,10 @@
   <name>parkerstage</name>
   <version>0.1.0</version>
   <description>
-    Parker 401200XR compound XY linear stage (2x 200 mm stroke, stacked).
+    Parker 401200XR/401XR150 compound XYZ linear stage (2x 200 mm stroke
+    stacked in XY, plus a 150 mm vertical Z stage on the X carriage).
 
-    Contains the URDF (two prismatic slide joints centered on the physical
+    Contains the URDF (three prismatic slide joints centered on the physical
     mid-stroke, box collision geometry for Gazebo/MuJoCo, and mesh-derived
     aluminum inertials), the STL meshes, and a launch file that brings up
     robot_state_publisher, joint_state_publisher_gui and rviz.

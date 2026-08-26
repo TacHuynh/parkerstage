@@ -63,10 +63,12 @@ def center(lo, hi):
     return [(lo[i] + hi[i]) / 2 for i in range(3)]
 
 
-def stage(axis, base, carriage, endcap_a, endcap_b, switch, flag, tag, poses=None):
+def stage(axis, base, carriage, endcap_a, endcap_b, switch, flag, tag, poses=None, travel=0.1):
     """axis: local index (0=x,1=y,2=z) of the slide direction.
     `poses` defaults to the raw Onshape poses; pass the X-flipped pose map for
-    the X stage (see bbox_in)."""
+    the X stage (see bbox_in) and the Z-export pose map (R.zposes) for the Z
+    stage, whose slide runs along the base local z.  `travel` is the half
+    stroke (0.1 m for the 401200XR Y/X stages, 0.075 m for the 401XR150 Z)."""
     if poses is None:
         poses = R.poses
     bmn, bmx = bbox_in(base, base, poses)
@@ -101,7 +103,7 @@ def stage(axis, base, carriage, endcap_a, endcap_b, switch, flag, tag, poses=Non
     print("  flag center          : %9.3f mm" % (1e3 * fl_c))
     print("  q_mid  (carriage onto base center)  : %+8.3f mm" % (1e3 * q_mid))
     print("  q_home (flag at switch)             : %+8.3f mm" % (1e3 * q_home))
-    print("  limits centered on mid-stroke: [%+.4f, %+.4f]" % (q_mid - 0.1, q_mid + 0.1))
+    print("  limits centered on mid-stroke: [%+.4f, %+.4f]" % (q_mid - travel, q_mid + travel))
     print()
 
 
@@ -126,3 +128,17 @@ stage(1, "401200xr__3_",
       "401xr___switch_flag__401xr___switch_flag",
       "X stage (top)",
       poses=R.poses_xflipped())
+
+# Z stage (mounted on the X carriage): slide along the Z base local z (the
+# stage stands on its -z end, so the slide is world +Z).  Measured from the
+# Z-export poses in the Z base frame; the along-slide offsets are invariant
+# under the mount.  Half stroke 75 mm (401XR150).
+stage(2, "z_401xr_150_base__401xr_150_base",
+      "z_401xr___carriage__401xr___carriage",
+      "z_401xr___carriage_end_caps__401xr___carriage_end_caps",
+      "z_401xr___carriage_end_caps__401xr___carriage_end_caps",
+      "z_401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
+      "z_401xr___switch_flag__401xr___switch_flag",
+      "Z stage (vertical)",
+      poses=R.zposes,
+      travel=0.075)

@@ -1,74 +1,107 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1658" height="1187" viewBox="0 0 1658 1187" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace">
+<svg xmlns="http://www.w3.org/2000/svg" width="2075" height="2398" viewBox="0 0 2075 2398" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace">
 <defs>
   <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto">
     <path d="M0 0 L8 4 L0 8 z" fill="#1e88e5"/>
   </marker>
 </defs>
-<rect x="0" y="0" width="1658" height="1187" fill="#ffffff"/>
+<rect x="0" y="0" width="2075" height="2398" fill="#ffffff"/>
 <text x="48" y="26" font-size="17" font-weight="bold" fill="#1a1a1a">
-parkerstage  ·  401200XR compound XY stage  ·  kinematic tree</text>
+parkerstage  ·  401200XR compound XYZ stage  ·  kinematic tree</text>
 <text x="48" y="44" font-size="11" fill="#546e7a">
-Two 401XR stages stacked: the bottom slides along world +Y, the top along world +X (200 mm stroke, centered on mid-stroke).  17 links / 16 joints / 2 prismatic DOF.  Home: y_slide +0.011912 mm, x_slide 0.011913 mm.
+Three 401XR stages stacked: Y slides along world +Y, X along world +X (200 mm stroke each, centered on mid-stroke), and the Z stage (401XR 150) stands on the X carriage and slides along world +Z (150 mm stroke).  36 links / 35 joints / 3 prismatic DOF.  Home: y_slide +11.9 mm, x_slide +11.9 mm, z_slide +11.9 mm.
 </text>
-<path d="M 77.6 85 V 175 H 343.1 V 265" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
-<text x="343.1" y="167" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
+<path d="M 77.6 85 V 210 H 343.1 V 335" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="343.1" y="202" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
 <tspan x="343.1" dy="0">base1_fixed_to_root  [fixed]</tspan>
 </text>
-<path d="M 343.1 302 V 392 H 612.5 V 482" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
-<text x="612.5" y="362" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
+<path d="M 343.1 372 V 497 H 612.5 V 622" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="612.5" y="467" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
 <tspan x="612.5" dy="0">y_slide  [prismatic]</tspan>
 <tspan x="612.5" dy="11">axis 0 1 0  -&gt;  world +Y</tspan>
 <tspan x="612.5" dy="11">q in [-0.079267, 0.120733] m</tspan>
 </text>
-<path d="M 612.5 519 V 609 H 881.9 V 699" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
-<text x="881.9" y="601" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
+<path d="M 612.5 659 V 784 H 881.9 V 909" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="881.9" y="776" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
 <tspan x="881.9" dy="0">base2_mounted_to_plate  [fixed]</tspan>
 </text>
-<path d="M 881.9 736 V 826 H 1205.9 V 916" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
-<text x="1205.9" y="796" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
+<path d="M 881.9 946 V 1071 H 1205.9 V 1196" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="1205.9" y="1041" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
 <tspan x="1205.9" dy="0">x_slide  [prismatic]</tspan>
 <tspan x="1205.9" dy="11">axis 1 0 0  -&gt;  world +X</tspan>
 <tspan x="1205.9" dy="11">q in [-0.079267, 0.120733] m</tspan>
 </text>
-<path d="M 612.5 519 V 609 H 1522.1 V 699" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
-<text x="1522.1" y="601" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
+<path d="M 612.5 659 V 784 H 1522.1 V 909" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="1522.1" y="776" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
 <tspan x="1522.1" dy="0">fastened_1  [fixed]</tspan>
+</text>
+<path d="M 1205.9 1303 V 1393 H 1889 V 1483" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="1889" y="1385" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
+<tspan x="1889" dy="0">z_mounted_to_x_carriage  [fixed]</tspan>
+</text>
+<path d="M 1889 1674 V 1722 H 1838.3 V 1770" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="1838.3" y="1692" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
+<tspan x="1838.3" dy="0">z_slide  [prismatic]</tspan>
+<tspan x="1838.3" dy="11">axis 1 0 0  -&gt;  world +Z</tspan>
+<tspan x="1838.3" dy="11">q in [-0.05397, 0.09603] m</tspan>
 </text>
 <rect x="48" y="48" width="59.2" height="37" rx="7" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.8"/>
 <text x="62" y="71" font-size="13" font-weight="bold" fill="#1a1a1a">root</text>
-<rect x="247.2" y="265" width="191.8" height="37" rx="7" fill="#eceff1" stroke="#546e7a" stroke-width="1.8"/>
-<text x="261.2" y="288" font-size="13" font-weight="bold" fill="#1a1a1a">401200xr__1_ · Y base</text>
-<rect x="786" y="699" width="191.8" height="37" rx="7" fill="#eceff1" stroke="#546e7a" stroke-width="1.8"/>
-<text x="800" y="722" font-size="13" font-weight="bold" fill="#1a1a1a">401200xr__3_ · X base</text>
-<rect x="579" y="482" width="67" height="37" rx="7" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.8"/>
-<text x="593" y="505" font-size="13" font-weight="bold" fill="#1a1a1a">plate</text>
-<rect x="1117.8" y="916" width="176.2" height="107" rx="7" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.8"/>
-<text x="1131.8" y="939" font-size="13" font-weight="bold" fill="#1a1a1a">X carriage assembly</text>
-<text x="1131.8" y="956" font-size="10" fill="#455a64">· carriage</text>
-<text x="1131.8" y="970" font-size="10" fill="#455a64">· end caps</text>
-<text x="1131.8" y="984" font-size="10" fill="#455a64">· encoder base</text>
-<text x="1131.8" y="998" font-size="10" fill="#455a64">· home-limit switch</text>
-<text x="1131.8" y="1012" font-size="10" fill="#455a64">· switch flag</text>
-<rect x="1434" y="699" width="176.2" height="121" rx="7" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.8"/>
-<text x="1448" y="722" font-size="13" font-weight="bold" fill="#1a1a1a">Y carriage assembly</text>
-<text x="1448" y="739" font-size="10" fill="#455a64">· encoder base</text>
-<text x="1448" y="753" font-size="10" fill="#455a64">· encoder</text>
-<text x="1448" y="767" font-size="10" fill="#455a64">· home-limit switch</text>
-<text x="1448" y="781" font-size="10" fill="#455a64">· switch flag</text>
-<text x="1448" y="795" font-size="10" fill="#455a64">· end caps</text>
-<text x="1448" y="809" font-size="10" fill="#455a64">· end caps</text>
-<rect x="48" y="1065" width="18" height="12" rx="2" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
-<text x="72" y="1076" font-size="10" fill="#455a64">root (world)</text>
-<rect x="170" y="1065" width="18" height="12" rx="2" fill="#eceff1" stroke="#546e7a" stroke-width="1.5"/>
-<text x="194" y="1076" font-size="10" fill="#455a64">fixed base</text>
-<rect x="280" y="1065" width="18" height="12" rx="2" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.5"/>
-<text x="304" y="1076" font-size="10" fill="#455a64">plate / table</text>
-<rect x="408" y="1065" width="18" height="12" rx="2" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
-<text x="432" y="1076" font-size="10" fill="#455a64">moving assembly</text>
-<line x1="548" y1="1071" x2="566" y2="1071" stroke="#1e88e5" stroke-width="2.5"/>
-<text x="572" y="1076" font-size="10" fill="#455a64">prismatic joint</text>
-<line x1="688" y1="1071" x2="706" y2="1071" stroke="#90a4ae" stroke-width="2.5" stroke-dasharray="4 3"/>
-<text x="712" y="1076" font-size="10" fill="#455a64">fixed joint</text>
-<text x="48" y="1099" font-size="10" fill="#78909c">Fixed-joint chains are grouped into assembly boxes; every link is listed in tree order.</text>
+<rect x="247.2" y="335" width="191.8" height="37" rx="7" fill="#eceff1" stroke="#546e7a" stroke-width="1.8"/>
+<text x="261.2" y="358" font-size="13" font-weight="bold" fill="#1a1a1a">401200xr__1_ · Y base</text>
+<rect x="786" y="909" width="191.8" height="37" rx="7" fill="#eceff1" stroke="#546e7a" stroke-width="1.8"/>
+<text x="800" y="932" font-size="13" font-weight="bold" fill="#1a1a1a">401200xr__3_ · X base</text>
+<rect x="579" y="622" width="67" height="37" rx="7" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.8"/>
+<text x="593" y="645" font-size="13" font-weight="bold" fill="#1a1a1a">plate</text>
+<rect x="1117.8" y="1196" width="176.2" height="107" rx="7" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.8"/>
+<text x="1131.8" y="1219" font-size="13" font-weight="bold" fill="#1a1a1a">X carriage assembly</text>
+<text x="1131.8" y="1236" font-size="10" fill="#455a64">· carriage</text>
+<text x="1131.8" y="1250" font-size="10" fill="#455a64">· end caps</text>
+<text x="1131.8" y="1264" font-size="10" fill="#455a64">· encoder base</text>
+<text x="1131.8" y="1278" font-size="10" fill="#455a64">· home-limit switch</text>
+<text x="1131.8" y="1292" font-size="10" fill="#455a64">· switch flag</text>
+<rect x="1434" y="909" width="176.2" height="121" rx="7" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.8"/>
+<text x="1448" y="932" font-size="13" font-weight="bold" fill="#1a1a1a">Y carriage assembly</text>
+<text x="1448" y="949" font-size="10" fill="#455a64">· encoder base</text>
+<text x="1448" y="963" font-size="10" fill="#455a64">· encoder</text>
+<text x="1448" y="977" font-size="10" fill="#455a64">· home-limit switch</text>
+<text x="1448" y="991" font-size="10" fill="#455a64">· switch flag</text>
+<text x="1448" y="1005" font-size="10" fill="#455a64">· end caps</text>
+<text x="1448" y="1019" font-size="10" fill="#455a64">· end caps</text>
+<rect x="1750.2" y="1483" width="277.6" height="191" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
+<text x="1764.2" y="1506" font-size="13" font-weight="bold" fill="#1a1a1a">Z base · 401XR 150 on X carriage</text>
+<text x="1764.2" y="1523" font-size="10" fill="#455a64">· front ballscrew holder</text>
+<text x="1764.2" y="1537" font-size="10" fill="#455a64">· coupling housing</text>
+<text x="1764.2" y="1551" font-size="10" fill="#455a64">· back ballscrew holder</text>
+<text x="1764.2" y="1565" font-size="10" fill="#455a64">· seal</text>
+<text x="1764.2" y="1579" font-size="10" fill="#455a64">· 401XR 150 base</text>
+<text x="1764.2" y="1593" font-size="10" fill="#455a64">· home-limit switch (l2)</text>
+<text x="1764.2" y="1607" font-size="10" fill="#455a64">· home-limit switch (l2)</text>
+<text x="1764.2" y="1621" font-size="10" fill="#455a64">· encoder base</text>
+<text x="1764.2" y="1635" font-size="10" fill="#455a64">· drive screw</text>
+<text x="1764.2" y="1649" font-size="10" fill="#455a64">· 10851610 (screw nut)</text>
+<text x="1764.2" y="1663" font-size="10" fill="#455a64">· m2 sm-16 screw</text>
+<rect x="1750.2" y="1770" width="176.2" height="121" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
+<text x="1764.2" y="1793" font-size="13" font-weight="bold" fill="#1a1a1a">Z carriage assembly</text>
+<text x="1764.2" y="1810" font-size="10" fill="#455a64">· end caps</text>
+<text x="1764.2" y="1824" font-size="10" fill="#455a64">· end caps</text>
+<text x="1764.2" y="1838" font-size="10" fill="#455a64">· encoder base</text>
+<text x="1764.2" y="1852" font-size="10" fill="#455a64">· encoder</text>
+<text x="1764.2" y="1866" font-size="10" fill="#455a64">· home-limit switch</text>
+<text x="1764.2" y="1880" font-size="10" fill="#455a64">· switch flag</text>
+<rect x="48" y="2276" width="18" height="12" rx="2" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+<text x="72" y="2287" font-size="10" fill="#455a64">root (world)</text>
+<rect x="170" y="2276" width="18" height="12" rx="2" fill="#eceff1" stroke="#546e7a" stroke-width="1.5"/>
+<text x="194" y="2287" font-size="10" fill="#455a64">fixed base</text>
+<rect x="280" y="2276" width="18" height="12" rx="2" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.5"/>
+<text x="304" y="2287" font-size="10" fill="#455a64">plate / table</text>
+<rect x="408" y="2276" width="18" height="12" rx="2" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+<text x="432" y="2287" font-size="10" fill="#455a64">moving assembly</text>
+<rect x="548" y="2276" width="18" height="12" rx="2" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.5"/>
+<text x="572" y="2287" font-size="10" fill="#455a64">Z stage</text>
+<line x1="640" y1="2282" x2="658" y2="2282" stroke="#1e88e5" stroke-width="2.5"/>
+<text x="664" y="2287" font-size="10" fill="#455a64">prismatic joint</text>
+<line x1="780" y1="2282" x2="798" y2="2282" stroke="#90a4ae" stroke-width="2.5" stroke-dasharray="4 3"/>
+<text x="804" y="2287" font-size="10" fill="#455a64">fixed joint</text>
+<text x="48" y="2310" font-size="10" fill="#78909c">Fixed-joint chains are grouped into assembly boxes; every link is listed in tree order.</text>
 </svg>

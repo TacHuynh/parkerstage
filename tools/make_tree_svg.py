@@ -38,6 +38,25 @@ SHORT = {
     "401200xr__3_": "401200xr__3_ (X base)",
     "base1_fixed_to_root": "base1_fixed_to_root",
     "base2_mounted_to_plate": "base2_mounted_to_plate",
+    "z_c3_401xr__c3_401xr": "c3 bracket (motor mount)",
+    "z_401xr_150_base__401xr_150_base": "401XR 150 base",
+    "z_401xr_front_ballscrew_holder__401xr_front_ballscrew_holder": "front ballscrew holder",
+    "z_401xr_coupling_housing__401xr_coupling_housing": "coupling housing",
+    "z_401xr_back_ballscrew_holder__401xr_back_ballscrew_holder": "back ballscrew holder",
+    "z_401xr_150_seal_seal__401xr_150_seal_seal": "seal",
+    "z_401xr___150___d9___drive_screw__401xr___150___d9___drive_screw": "drive screw",
+    "z_10851610__10851610": "10851610 (screw nut)",
+    "z_m2___sm_16__m2___sm_16": "m2 sm-16 screw",
+    "z_401xr___h2__l2___homelimit_switch__401xr___h2__l2___homelimit_switch_1": "home-limit switch (l2)",
+    "z_401xr___h2__l2___homelimit_switch__401xr___h2__l2___homelimit_switch__1_": "home-limit switch (l2)",
+    "z_401xr___carriage__401xr___carriage": "carriage",
+    "z_401xr___carriage_end_caps__401xr___carriage_end_caps": "end caps",
+    "z_401xr___carriage_end_caps__401xr___carriage_end_caps_1__1_": "end caps",
+    "z_401xr___encoder__401xr___encoder": "encoder",
+    "z_401xr___encoder_base_2__401xr___encoder_base_2": "encoder base",
+    "z_401xr___encoder_base_2__401xr___encoder_base_2_1": "encoder base",
+    "z_401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch": "home-limit switch",
+    "z_401xr___switch_flag__401xr___switch_flag": "switch flag",
 }
 
 # box id -> (title, fill, stroke)
@@ -48,6 +67,8 @@ BOX_STYLE = {
     "plate":          ("plate  ·  Y carriage + table", "#fafafa", "#9e9e9e"),
     "X assembly":     ("X carriage assembly",       "#e3f2fd", "#1e88e5"),
     "Y assembly":     ("Y carriage assembly",       "#e3f2fd", "#1e88e5"),
+    "Z base":         ("Z base  ·  401XR 150 on X carriage", "#fff3e0", "#fb8c00"),
+    "Z assembly":     ("Z carriage assembly",       "#fff3e0", "#fb8c00"),
 }
 
 GAP_COL = 140          # horizontal gap between columns
@@ -108,11 +129,23 @@ def main():
     y_tree = preorder(children, y_root)
     assert not (set(x_tree) & set(y_tree)), "X/Y assembly subtrees overlap"
 
+    # carve the Z stage out of the X subtree: fixed base group + z_slide carriage group
+    z_root = joints["z_mounted_to_x_carriage"].find("child").get("link")
+    z_asm_root = joints["z_slide"].find("child").get("link")
+    z_asm_tree = preorder(children, z_asm_root)
+    z_base_tree = [l for l in preorder(children, z_root) if l not in set(z_asm_tree)]
+    assert not (set(z_base_tree) & set(z_asm_tree)), "Z base/assembly subtrees overlap"
+    x_tree = [l for l in x_tree if l not in set(z_base_tree) | set(z_asm_tree)]
+
     box_of = {}
     for l in x_tree:
         box_of[l] = "X assembly"
     for l in y_tree:
         box_of[l] = "Y assembly"
+    for l in z_base_tree:
+        box_of[l] = "Z base"
+    for l in z_asm_tree:
+        box_of[l] = "Z assembly"
     for l in ("plate",):
         box_of[l] = "plate"
     for l in ("401200xr__1_",):
@@ -135,6 +168,8 @@ def main():
         "plate": "plate",
         "X assembly": x_root,
         "Y assembly": y_root,
+        "Z base": z_root,
+        "Z assembly": z_asm_root,
     }
     box_members = {}
     for box, r in rep.items():
@@ -148,7 +183,7 @@ def main():
 
     # --- collapsed tree edges (joints crossing boxes) ----------------------
     edge_order = ["base1_fixed_to_root", "y_slide", "base2_mounted_to_plate",
-                  "x_slide", "fastened_1"]
+                  "x_slide", "fastened_1", "z_mounted_to_x_carriage", "z_slide"]
     edges = []
     for name in edge_order:
         j = joints[name]
@@ -159,9 +194,9 @@ def main():
 
     # --- geometry ----------------------------------------------------------
     depth = {"root": 0, "Y base": 1, "plate": 2, "X base": 3,
-             "Y assembly": 3, "X assembly": 4}
+             "Y assembly": 3, "X assembly": 4, "Z base": 5, "Z assembly": 6}
     column = {"root": 0, "Y base": 1, "plate": 2, "X base": 3,
-              "X assembly": 4, "Y assembly": 5}
+              "X assembly": 4, "Y assembly": 5, "Z base": 6, "Z assembly": 6}
     boxes = {}
     for b, (title, fill, stroke) in BOX_STYLE.items():
         r, mem = box_members[b]
@@ -182,11 +217,15 @@ def main():
     y_of = lambda b: MARGIN + depth[b] * row_h
     x_of = {}
     x = MARGIN
-    for b in sorted(column, key=lambda k: column[k]):
-        x_of[b] = x + boxes[b]["w"] / 2
-        x += boxes[b]["w"] + GAP_COL
+    col_x = {}
+    for col in sorted(set(column.values())):
+        col_x[col] = x
+        x += max(boxes[b]["w"] for b in column if column[b] == col) + GAP_COL
+    for b in column:
+        x_of[b] = col_x[column[b]] + boxes[b]["w"] / 2
     W = x - GAP_COL + MARGIN
-    H = MARGIN + 4 * row_h + max_h + 150  # + legend block
+    NROWS = max(depth.values()) + 1
+    H = MARGIN + NROWS * row_h + max_h + 150  # + legend block
 
     # --- joint labels -------------------------------------------------------
     def joint_label(name):
@@ -194,16 +233,17 @@ def main():
         if j.get("type") == "prismatic":
             axis = j.find("axis").get("xyz")
             lim = j.find("limit")
-            world = "world +Y" if name == "y_slide" else "world +X"
+            world = {"y_slide": "world +Y", "x_slide": "world +X",
+                      "z_slide": "world +Z"}[name]
             return True, ["%s  [prismatic]" % name,
                           "axis %s  ->  %s" % (axis, world),
                           "q in [%s, %s] m" % (lim.get("lower"), lim.get("upper"))]
         return False, ["%s  [fixed]" % name]
 
-    # home offsets (single source of truth: rebuild_urdf.py)
-    src = open(REBUILD, encoding="utf-8").read()
-    home_y = re.search(r"HOME_Y = ([-\d.]+)", src).group(1)
-    home_x = re.search(r"HOME_X = ([-\d.]+)", src).group(1)
+    # home offsets (single source of truth: rebuild_urdf.py -> URDF header comment)
+    src = open(URDF, encoding="utf-8").read()
+    m = re.search(r"home trips at q=([-+\d.]+) m \(Y\) / ([-+\d.]+) m \(X\) / ([-+\d.]+) m \(Z\)", src)
+    home_y, home_x, home_z = ["%+.1f" % (float(v) * 1e3) for v in m.groups()]
 
     # --- emit ----------------------------------------------------------------
     S = []
@@ -219,12 +259,13 @@ def main():
     add('<rect x="0" y="0" width="%d" height="%d" fill="#ffffff"/>' % (W, H))
     add('<text x="%d" y="%d" font-size="17" font-weight="bold" fill="#1a1a1a">'
         % (MARGIN, MARGIN - 22))
-    add("parkerstage  ·  401200XR compound XY stage  ·  kinematic tree</text>")
+    add("parkerstage  ·  401200XR compound XYZ stage  ·  kinematic tree</text>")
     add('<text x="%d" y="%d" font-size="%d" fill="#546e7a">' % (MARGIN, MARGIN - 4, FS_META))
-    add("Two 401XR stages stacked: the bottom slides along world +Y, the top along world +X "
-        "(200 mm stroke, centered on mid-stroke).  "
-        "17 links / 16 joints / 2 prismatic DOF.  Home: y_slide +%s mm, x_slide %s mm."
-        % (home_y, home_x))
+    add("Three 401XR stages stacked: Y slides along world +Y, X along world +X "
+        "(200 mm stroke each, centered on mid-stroke), and the Z stage (401XR 150) "
+        "stands on the X carriage and slides along world +Z (150 mm stroke).  "
+        "36 links / 35 joints / 3 prismatic DOF.  Home: y_slide %s mm, x_slide %s mm, z_slide %s mm."
+        % (home_y, home_x, home_z))
     add("</text>")
 
     # edges first (under boxes)
@@ -268,11 +309,12 @@ def main():
             ty += LINE_H
 
     # legend
-    ly = MARGIN + 4 * row_h + max_h + 28
+    ly = MARGIN + NROWS * row_h + max_h + 28
     items = [("#e8f5e9", "#2e7d32", "root (world)"),
              ("#eceff1", "#546e7a", "fixed base"),
              ("#fafafa", "#9e9e9e", "plate / table"),
              ("#e3f2fd", "#1e88e5", "moving assembly"),
+             ("#fff3e0", "#fb8c00", "Z stage"),
              (None, "#1e88e5", "prismatic joint"),
              (None, "#90a4ae", "fixed joint")]
     lx = MARGIN

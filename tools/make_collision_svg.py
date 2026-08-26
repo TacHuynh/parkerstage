@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Generate docs/collision_geometry.svg from urdf/parkerstage.urdf.
 
-Renders the collision model of the 401200XR compound XY stage:
+Renders the collision model of the 401200XR compound XYZ stage:
   * top view (XY)  -- every collision box, color-coded by kinematic group,
     with the slide travel sweep (envelope + extreme positions);
   * sections A-A (XZ) and B-B (YZ) -- channel cross-sections cut through each
-    carriage at q = 0, showing the 1 mm clearances;
-  * a per-link inventory of the 20 boxes.
+    XY carriage at q = 0, showing the clearances (Z column excluded so the
+    XY-carriage detail stays readable; the Z stage is shown in the top view);
+  * a per-link inventory of all 30 boxes.
 
 Run:  python3 tools/make_collision_svg.py
 """
@@ -46,6 +47,7 @@ GROUP = {
     "plate":      ("#f0f0f0", "#9e9e9e"),
     "Y assembly": ("#e8eaf6", "#7986cb"),
     "X assembly": ("#e3f2fd", "#1e88e5"),
+    "Z stage":    ("#fff3e0", "#fb8c00"),
 }
 
 
@@ -127,6 +129,8 @@ def group_of(link):
         return "X assembly"
     if link in Y_ASSEMBLY:
         return "Y assembly"
+    if link.startswith("z_"):
+        return "Z stage"
     if link == "plate":
         return "plate"
     if link == "401200xr__1_":
@@ -144,10 +148,10 @@ def main():
     lo = float(joints["y_slide"].find("limit").get("lower"))   # meters
     hi = float(joints["y_slide"].find("limit").get("upper"))
 
-    q0 = {"y_slide": 0.0, "x_slide": 0.0}
+    q0 = {"y_slide": 0.0, "x_slide": 0.0, "z_slide": 0.0}
     pos0 = poses_at(joints, q0)
     boxes0 = world_aabbs(links, pos0)
-    assert len([b for v in boxes0.values() for b in v]) == 20, "expected 20 boxes"
+    assert len([b for v in boxes0.values() for b in v]) == 30, "expected 30 boxes (20 XY + 10 Z)"
 
     # travel envelope (axis-aligned prismatic motion preserves orientation)
     def sweep_rect(mn, mx, moves_x, moves_y):
@@ -160,8 +164,9 @@ def main():
             r[1][0] += hi
         return r
 
-    moving_x = set(X_ASSEMBLY)                       # rides y_slide AND x_slide
-    moving_y = (set(Y_ASSEMBLY) | {"plate", "401200xr__3_"})  # rides y_slide only
+    z_links_all = {n for n in links if n.startswith("z_")}
+    moving_x = set(X_ASSEMBLY) | z_links_all         # rides y_slide AND x_slide (Z stage on the X carriage)
+    moving_y = (set(Y_ASSEMBLY) | {"plate", "401200xr__3_"}) | z_links_all  # rides y_slide
 
     # extreme configs for dashed outlines
     ext = []
@@ -190,6 +195,10 @@ def main():
 
     secA = section(boxes0, 1, y0)   # XZ through the Y carriage
     secB = section(boxes0, 0, x0)   # YZ through the X carriage
+    # keep the sections XY-carriage focused: the tall Z column would collapse
+    # the panel scale, so drop Z boxes from the cut planes (they are in the top view)
+    secA = [r for r in secA if not r[5].startswith("z_")]
+    secB = [r for r in secB if not r[5].startswith("z_")]
 
     # --- clearances (from q=0 AABBs) ----------------------------------------
     yslab, yrail1, yrail2 = (boxes0["401200xr__1_"][0], boxes0["401200xr__1_"][1],
@@ -240,7 +249,7 @@ def main():
     emn, emx = extent(env_rects)
     allmn = [min(tmn[i], emn[i]) for i in range(2)]
     allmx = [max(tmx[i], emx[i]) for i in range(2)]
-    PAD = 22
+    PAD = 0.022   # metres (22 mm of margin around the sweep)
     for i in range(2):
         allmn[i] -= PAD
         allmx[i] += PAD
@@ -252,10 +261,10 @@ def main():
     amn, amx = extent(secA)
     bmn, bmx = extent(secB)
     for i in range(2):
-        amn[i] -= 15
-        amx[i] += 15
-        bmn[i] -= 15
-        bmx[i] += 15
+        amn[i] -= 0.015   # 15 mm of margin (metres)
+        amx[i] += 0.015
+        bmn[i] -= 0.015
+        bmx[i] += 0.015
     secA_p = new_panel("Section A-A (XZ, through Y carriage at q = 0)")
     secA_p["scale"] = min(660 / (amx[0] - amn[0]), 240 / (amx[1] - amn[1]))
     secA_p["ox0"] = amn[0]
@@ -293,14 +302,18 @@ def main():
         return (p["ox_px"] + (x - p["ox0"]) * p["scale"],
                 p["oy_px"] + (p["oy0"] - y) * p["scale"])
 
+    nboxes = sum(len(v) for v in boxes0.values())
+    nlinks = len(boxes0)
+
     # ---- header ----
     add('<text x="60" y="46" font-size="17" font-weight="bold" fill="#1a1a1a">'
-        'parkerstage  ·  401200XR compound XY stage  ·  collision geometry</text>')
+        'parkerstage  ·  401200XR compound XYZ stage  ·  collision geometry</text>')
     add('<text x="60" y="68" font-size="11" fill="#546e7a">'
-        '20 boxes across 15 links, color-coded by kinematic group (same groups as the kinematic tree).</text>')
+        '%d boxes across %d links, color-coded by kinematic group (same groups as the kinematic tree).</text>'
+        % (nboxes, nlinks))
     add('<text x="60" y="84" font-size="11" fill="#546e7a">'
-        'Boxes are built from the clean interfaces with explicit gaps; the sweep (y_slide, x_slide) '
-        'was verified zero-overlap over 25 travel configurations.</text>')
+        'Boxes are built from the clean interfaces with explicit gaps; the sweep (y_slide, x_slide, z_slide) '
+        'was verified zero-overlap over 125 travel configurations.</text>')
 
     # ---- top view ----
     panel_origin(top, "top")
@@ -399,7 +412,8 @@ def main():
     add('<text x="60" y="%d" font-size="14" font-weight="bold" fill="#1a1a1a">Legend</text>' % ly)
     lx = 60
     order = [("Y base", "fixed to root"), ("X base", "bolted to plate"), ("plate", "Y carriage + table"),
-             ("Y assembly", "moves with y_slide"), ("X assembly", "moves with y_slide + x_slide")]
+             ("Y assembly", "moves with y_slide"), ("X assembly", "moves with y_slide + x_slide"),
+             ("Z stage", "mounted on X carriage · rides y_slide + x_slide")]
     for grp, note in order:
         fill, stroke = GROUP[grp]
         add('<rect x="%d" y="%d" width="18" height="12" rx="2" fill="%s" '
@@ -413,7 +427,7 @@ def main():
 
     # inventory table (two columns)
     add('<text x="60" y="%d" font-size="14" font-weight="bold" fill="#1a1a1a">'
-        'Collision boxes by link (20 boxes / 15 links)</text>' % (ly + 76))
+        'Collision boxes by link (%d boxes / %d links)</text>' % (ly + 76, nboxes, nlinks))
     rows = []
     for name in sorted(boxes0):
         grp = group_of(name)

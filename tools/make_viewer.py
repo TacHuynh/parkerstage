@@ -41,21 +41,21 @@ const MESH_DATA = __MESHES__;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1d23);
 const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.001, 100);
-camera.position.set(0.30, 0.30, 0.35);
+camera.position.set(0.38, 0.32, 0.55);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0.05, 0.02, 0);
+controls.target.set(0.05, 0.12, 0.02);
 controls.update();
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x334, 1.1));
 scene.add(new THREE.DirectionalLight(0xffffff, 1.4));
 scene.add(new THREE.DirectionalLight(0xffffff, 0.6));
 scene.add(new THREE.AxesHelper(0.05));
-const g = new THREE.GridHelper(0.4, 20, 0x444, 0x333);
-g.position.y = -0.04;
+const g = new THREE.GridHelper(0.5, 25, 0x444, 0x333);
+g.position.y = -0.05;
 scene.add(g);
 
 function mat4FromRpyXYZ(rpy, xyz) {
@@ -137,10 +137,11 @@ async function main() {
   }
 
   // view presets (stage frame: X right, Y into screen/left, Z up)
-  const views = { iso: [[0.30, 0.30, 0.35], [0.05, 0.02, 0]],
-                  top: [[0.05, 0.60, 0.02], [0.05, 0.02, 0]],
-                  sideX: [[0.70, 0.10, 0.02], [0.05, 0.02, 0]],
-                  end: [[0.05, 0.10, 0.60], [0.05, 0.02, 0]] };
+  const views = { iso: [[0.40, 0.34, 0.60], [0.05, 0.14, 0.04]],
+                  top: [[0.05, 0.75, 0.02], [0.05, 0.14, 0.04]],
+                  sideX: [[0.85, 0.18, 0.06], [0.05, 0.14, 0.04]],
+                  front: [[0.05, -0.65, 0.30], [0.05, 0.14, 0.04]],
+                  end: [[0.05, 0.14, 0.75], [0.05, 0.14, 0.04]] };
   const vbar = document.createElement('div');
   vbar.style.cssText = 'position:absolute;top:8px;left:8px;z-index:10;background:rgba(0,0,0,.6);padding:4px 8px;border-radius:6px;';
   for (const [k, [pos, tgt]] of Object.entries(views)) {
@@ -154,7 +155,7 @@ async function main() {
   // (view presets injected)
   const panel = document.createElement('div');
   panel.style.cssText = 'position:absolute;top:8px;right:8px;z-index:10;background:rgba(0,0,0,.6);color:#eee;font:12px monospace;padding:8px 12px;border-radius:6px;';
-  const labelFor = { y_slide: 'Y slide (bottom stage)', x_slide: 'X slide (top stage)' };
+  const labelFor = { y_slide: 'Y slide (bottom stage)', x_slide: 'X slide (middle stage)', z_slide: 'Z slide (vertical stage)' };
   for (const jt of joints) {
     if (!jt.axis) continue;
     const lim = [...doc.querySelectorAll('joint')].find(j => j.getAttribute('name') === jt.name).querySelector('limit');
