@@ -329,8 +329,8 @@ _zcx = _mesh_extent(Z_BASE, Z_BASE, zposes, 0, zlinks)
 _zcy = _mesh_extent(Z_BASE, Z_BASE, zposes, 1, zlinks)
 _zlo = _mesh_extent(Z_BASE, Z_BASE, zposes, 2, zlinks)[0]
 _xcar_top = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 2)[1]
-Z_MOUNT_T = [-(_zcy[0] + _zcy[1]) / 2.0,                       # base2 x: centre footprint
-             _mesh_center_y(X_CARRIAGE, BASE2, poses_xflipped()) - (_zcx[0] + _zcx[1]) / 2.0,  # base2 y: on X carriage centre
+Z_MOUNT_T = [(_zcy[0] + _zcy[1]) / 2.0,                        # centres the Z footprint on the XY assembly centre line (world -y)
+             _mesh_center_y(X_CARRIAGE, BASE2, poses_xflipped()) - (_zcx[0] + _zcx[1]) / 2.0,  # on X carriage centre (world +x)
              _xcar_top + 0.0030 - _zlo]                        # base2 z: base -z end above the XY sweep
 # (the column is FIXED, so its base end must float clear of the XY travel: the
 # X-base rails sweep beneath it, tallest at z = rail top; +0.0030 leaves a
@@ -1050,6 +1050,49 @@ def verify():
         if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
             print("Z_SLIDE LEAK to %s" % name)
             ok = False
+    # the Z column is a FIXED frame at the assembly centre: no Z link may move
+    # with y_slide or x_slide (the Y/X leak loops only scan the XY export's
+    # link set, so a re-mount to a moving link would otherwise go unnoticed)
+    z_indep = True
+    for jn, qp in (("y_slide", zy), ("x_slide", zx)):
+        for name in Z_ALL:
+            a = [z0[name][i][3] for i in range(3)]
+            b = [qp[name][i][3] for i in range(3)]
+            if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
+                print("Z_COLUMN MOVES WITH %s: %s d=%s"
+                      % (jn, name, [round(b[i] - a[i], 6) for i in range(3)]))
+                ok = z_indep = False
+    print("Z INDEPENDENCE: %s (%d Z links fixed under y_slide/x_slide)"
+          % ("OK" if z_indep else "FAILED", len(Z_ALL)))
+
+    # the Z column must remain centred in line with the XY assembly: its base
+    # footprint centre must coincide (in the x-y plane, at q=0) with the X
+    # carriage centre -- the shared centre line of the Y and X assemblies.  A
+    # regression that shifts the column off this line is caught here even
+    # though the stroke/mid-stroke/home guards are invariant to a planar mount
+    # shift.
+    z_cent = True
+    ZCENT_TOL = 0.0015  # ~1.5 mm: absorbs mesh-bbox rounding
+    _ze0 = _mesh_extent(Z_BASE, Z_BASE, zposes, 0, zlinks)
+    _ze1 = _mesh_extent(Z_BASE, Z_BASE, zposes, 1, zlinks)
+    _cc0 = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 0, links)
+    _cc1 = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 1, links)
+    Mzb = ZM[Z_BASE]   # world pose of the Z base frame at q=0
+    Mcx = poses[X_CARRIAGE]  # world pose of the X carriage at q=0
+
+    def _wcent(M, lo, hi):
+        c = [(lo[k] + hi[k]) / 2.0 for k in range(3)]
+        return [sum(M[i][k] * c[k] for k in range(3)) + M[i][3] for i in range(3)]
+
+    wz = _wcent(Mzb, [_ze0[0], _ze1[0], 0], [_ze0[1], _ze1[1], 0])
+    wx = _wcent(Mcx, [_cc0[0], _cc1[0], 0], [_cc0[1], _cc1[1], 0])
+    for ax, sym in ((0, "x"), (1, "y")):
+        if abs(wz[ax] - wx[ax]) > ZCENT_TOL:
+            print("Z OFFSET %s: column centre %+.4f m vs X carriage %+.4f m"
+                  % (sym, wz[ax], wx[ax]))
+            ok = z_cent = False
+    print("Z CENTERED: %s (base footprint centre (%+.4f, %+.4f) on the assembly centre)"
+          % ("OK" if z_cent else "FAILED", wz[0], wz[1]))
     print("VERIFY: %s" % ("OK" if ok else "FAILED"))
     return ok
 
