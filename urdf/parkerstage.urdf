@@ -819,7 +819,7 @@
         <child link="401xr___carriage__401xr___carriage_1" />
     </joint>
     <joint name="z_mounted_to_root" type="fixed">
-        <origin xyz="-0.041267 0.021983 0.168675" rpy="0 0 0" />
+        <origin xyz="-0.020534 0.042715 0.218675" rpy="0 0 0" />
         <parent link="root" />
         <child link="z_c3_401xr__c3_401xr" />
     </joint>

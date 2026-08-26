@@ -329,12 +329,13 @@ _zcx = _mesh_extent(Z_BASE, Z_BASE, zposes, 0, zlinks)
 _zcy = _mesh_extent(Z_BASE, Z_BASE, zposes, 1, zlinks)
 _zlo = _mesh_extent(Z_BASE, Z_BASE, zposes, 2, zlinks)[0]
 _xcar_top = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 2)[1]
-Z_MOUNT_T = [(_zcy[0] + _zcy[1]) / 2.0,                        # centres the Z footprint on the XY assembly centre line (world -y)
-             _mesh_center_y(X_CARRIAGE, BASE2, poses_xflipped()) - (_zcx[0] + _zcx[1]) / 2.0,  # on X carriage centre (world +x)
-             _xcar_top + 0.0030 - _zlo]                        # base2 z: base -z end above the XY sweep
+Z_MOUNT_T = [(_zcy[0] + _zcy[1]) / 2.0 - MID_STROKE,          # centre the column over the XY travel centre (world -y; +mid via the y slide)
+             _mesh_center_y(X_CARRIAGE, BASE2, poses_xflipped()) + MID_STROKE - (_zcx[0] + _zcx[1]) / 2.0,  # on X carriage centre at mid-travel (world +x; +mid via the x slide)
+             _xcar_top + 0.0030 + 0.050 - _zlo]              # base2 z: base -z end above the XY sweep
 # (the column is FIXED, so its base end must float clear of the XY travel: the
 # X-base rails sweep beneath it, tallest at z = rail top; +0.0030 leaves a
-# ~2.1 mm gap over the rails, verified by the collision sweep below)
+# ~2.1 mm gap over the rails, and +0.050 raises the whole Z assembly 50 mm.
+# Both are verified by the collision sweep below)
 ZMOUNT = t4(Z_R, Z_MOUNT_T)  # base2 coords -> Z base coords
 
 
@@ -1065,20 +1066,22 @@ def verify():
     print("Z INDEPENDENCE: %s (%d Z links fixed under y_slide/x_slide)"
           % ("OK" if z_indep else "FAILED", len(Z_ALL)))
 
-    # the Z column must remain centred in line with the XY assembly: its base
-    # footprint centre must coincide (in the x-y plane, at q=0) with the X
-    # carriage centre -- the shared centre line of the Y and X assemblies.  A
-    # regression that shifts the column off this line is caught here even
-    # though the stroke/mid-stroke/home guards are invariant to a planar mount
-    # shift.
+    # the Z column is a FIXED frame, so it must be centred over the CENTRE of
+    # the XY travel envelope (both slides at MID_STROKE), not over any single
+    # posed position: only then does the column sit on the assembly centre line
+    # across the whole travel.  Check its base footprint centre coincides (in
+    # the x-y plane) with the X carriage centre at mid-travel.  A regression
+    # that shifts the column off this line is caught here even though the
+    # stroke/mid-stroke/home guards are invariant to a planar mount shift.
     z_cent = True
     ZCENT_TOL = 0.0015  # ~1.5 mm: absorbs mesh-bbox rounding
     _ze0 = _mesh_extent(Z_BASE, Z_BASE, zposes, 0, zlinks)
     _ze1 = _mesh_extent(Z_BASE, Z_BASE, zposes, 1, zlinks)
     _cc0 = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 0, links)
     _cc1 = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 1, links)
-    Mzb = ZM[Z_BASE]   # world pose of the Z base frame at q=0
-    Mcx = poses[X_CARRIAGE]  # world pose of the X carriage at q=0
+    _zmid = poses_at({"y_slide": MID_STROKE, "x_slide": MID_STROKE, "z_slide": 0.0})
+    Mzb = ZM[Z_BASE]                       # world pose of the Z base frame at q=0
+    Mcx = _zmid[X_CARRIAGE]                # world pose of the X carriage at mid-travel
 
     def _wcent(M, lo, hi):
         c = [(lo[k] + hi[k]) / 2.0 for k in range(3)]
@@ -1088,10 +1091,10 @@ def verify():
     wx = _wcent(Mcx, [_cc0[0], _cc1[0], 0], [_cc0[1], _cc1[1], 0])
     for ax, sym in ((0, "x"), (1, "y")):
         if abs(wz[ax] - wx[ax]) > ZCENT_TOL:
-            print("Z OFFSET %s: column centre %+.4f m vs X carriage %+.4f m"
+            print("Z OFFSET %s: column centre %+.4f m vs X carriage mid-travel %+.4f m"
                   % (sym, wz[ax], wx[ax]))
             ok = z_cent = False
-    print("Z CENTERED: %s (base footprint centre (%+.4f, %+.4f) on the assembly centre)"
+    print("Z CENTERED: %s (base footprint centre (%+.4f, %+.4f) on the mid-travel centre)"
           % ("OK" if z_cent else "FAILED", wz[0], wz[1]))
     print("VERIFY: %s" % ("OK" if ok else "FAILED"))
     return ok
