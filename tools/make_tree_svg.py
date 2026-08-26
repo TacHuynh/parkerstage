@@ -67,7 +67,7 @@ BOX_STYLE = {
     "plate":          ("plate  ·  Y carriage + table", "#fafafa", "#9e9e9e"),
     "X assembly":     ("X carriage assembly",       "#e3f2fd", "#1e88e5"),
     "Y assembly":     ("Y carriage assembly",       "#e3f2fd", "#1e88e5"),
-    "Z base":         ("Z base  ·  401XR 150 on X carriage", "#fff3e0", "#fb8c00"),
+    "Z base":         ("Z base  ·  401XR 150 fixed column", "#fff3e0", "#fb8c00"),
     "Z assembly":     ("Z carriage assembly",       "#fff3e0", "#fb8c00"),
 }
 
@@ -129,13 +129,13 @@ def main():
     y_tree = preorder(children, y_root)
     assert not (set(x_tree) & set(y_tree)), "X/Y assembly subtrees overlap"
 
-    # carve the Z stage out of the X subtree: fixed base group + z_slide carriage group
-    z_root = joints["z_mounted_to_x_carriage"].find("child").get("link")
+    # the Z stage is a fixed column bolted to root (independent of the XY
+    # slides): split it into the fixed base group + the z_slide carriage group
+    z_root = joints["z_mounted_to_root"].find("child").get("link")
     z_asm_root = joints["z_slide"].find("child").get("link")
     z_asm_tree = preorder(children, z_asm_root)
     z_base_tree = [l for l in preorder(children, z_root) if l not in set(z_asm_tree)]
     assert not (set(z_base_tree) & set(z_asm_tree)), "Z base/assembly subtrees overlap"
-    x_tree = [l for l in x_tree if l not in set(z_base_tree) | set(z_asm_tree)]
 
     box_of = {}
     for l in x_tree:
@@ -183,7 +183,7 @@ def main():
 
     # --- collapsed tree edges (joints crossing boxes) ----------------------
     edge_order = ["base1_fixed_to_root", "y_slide", "base2_mounted_to_plate",
-                  "x_slide", "fastened_1", "z_mounted_to_x_carriage", "z_slide"]
+                  "x_slide", "fastened_1", "z_mounted_to_root", "z_slide"]
     edges = []
     for name in edge_order:
         j = joints[name]
@@ -194,7 +194,7 @@ def main():
 
     # --- geometry ----------------------------------------------------------
     depth = {"root": 0, "Y base": 1, "plate": 2, "X base": 3,
-             "Y assembly": 3, "X assembly": 4, "Z base": 5, "Z assembly": 6}
+             "Y assembly": 3, "X assembly": 4, "Z base": 1, "Z assembly": 2}
     column = {"root": 0, "Y base": 1, "plate": 2, "X base": 3,
               "X assembly": 4, "Y assembly": 5, "Z base": 6, "Z assembly": 6}
     boxes = {}
@@ -261,9 +261,10 @@ def main():
         % (MARGIN, MARGIN - 22))
     add("parkerstage  ·  401200XR compound XYZ stage  ·  kinematic tree</text>")
     add('<text x="%d" y="%d" font-size="%d" fill="#546e7a">' % (MARGIN, MARGIN - 4, FS_META))
-    add("Three 401XR stages stacked: Y slides along world +Y, X along world +X "
+    add("Three 401XR stages: Y slides along world +Y, X along world +X "
         "(200 mm stroke each, centered on mid-stroke), and the Z stage (401XR 150) "
-        "stands on the X carriage and slides along world +Z (150 mm stroke).  "
+        "is a FIXED column at the assembly centre sliding along world +Z "
+        "(150 mm stroke), independent of the XY axes.  "
         "36 links / 35 joints / 3 prismatic DOF.  Home: y_slide %s mm, x_slide %s mm, z_slide %s mm."
         % (home_y, home_x, home_z))
     add("</text>")

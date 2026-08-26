@@ -2,11 +2,12 @@
 
 URDF and ROS package for a **Parker 401200XR/401XR150 compound XYZ linear
 stage** — two identical 401XR ballscrew-driven stages stacked perpendicular,
-200 mm stroke each, plus a 401XR **150** (150 mm stroke) standing vertically on
-the top carriage. The bottom stage travels along **+Y**; the middle stage
-(mounted on the bottom carriage's table) travels along **+X**; the Z stage
-stands on the X carriage (motor up, base end on the carriage) and travels along
-**+Z**.
+200 mm stroke each, plus a 401XR **150** (150 mm stroke) standing vertically at
+the **centre of the assembly as a fixed column**. The bottom stage travels
+along **+Y**; the middle stage (mounted on the bottom carriage's table)
+travels along **+X**; the Z column is bolted to the world at the assembly
+centre — independent of the XY motion — and its carriage travels along **+Z**
+(up/down).
 
 The model is derived from two Onshape exports (kept as
 `urdf/parkerstage.urdf.onshape` and `urdf/zslide.urdf.onshape`) and rebuilt
@@ -38,9 +39,9 @@ parkerstage/
 
 **Kinematic tree** — links as boxes, joints as labeled edges. Chains of fixed
 joints are grouped into assembly boxes (every link is still listed, in tree
-order) so the three prismatic slide joints — the only movable DOF — stand out
-(the Z stage appears as its own orange branch: `X assembly → Z base →
-Z assembly`, split by `z_slide`). Regenerate with
+order) so the three prismatic slide joints — the only movable DOF — stand out.
+The Z stage is its own orange branch off `root` (`root → Z base → Z assembly`,
+split by `z_slide`), independent of the XY chain. Regenerate with
 `python3 tools/make_tree_svg.py`.
 
 ![collision geometry](docs/collision_geometry.svg)
@@ -59,7 +60,10 @@ inventory. Regenerate with `python3 tools/make_collision_svg.py`.
 - **`x_slide`** — prismatic, axis `1 0 0` (world +X), drives the top carriage
   group and the Z stage mounted on it.
 - **`z_slide`** — prismatic, axis `1 0 0` in the Z base frame (world +Z),
-  drives the Z carriage group up and down.
+  drives the Z carriage group up and down. The Z base is **fixed to `root`**
+  at the assembly centre: it does not move with `y_slide` or `x_slide` — the
+  XY stages sweep beneath the column (its base end floats ~2 mm above the
+  tallest swept feature, the X-base rails).
 - **Limits** are centered on the physical mid-stroke, not the CAD zero
   configuration: `y_slide` and `x_slide` are `[-0.0793, +0.1207]` m about
   `q = +0.0207` (200 mm stroke); `z_slide` is `[-0.0540, +0.0960]` m about
@@ -198,9 +202,12 @@ and view-preset buttons for inspecting individual parts.
   posed exactly like the Y carriage (encoder toward base +x, switch/flag
   toward base −x); carriage stays upright and travel still follows world +X.
   The collision boxes and the two doc SVGs are regenerated to match.
-- **Z mount:** the Z stage stands on its −z end (motor up) centered on the X
-  carriage, so the whole column clears the XY stage and the carriage hangs on
-  the −y side. `z_slide`'s local axis `1 0 0` maps to world +Z through the
-  mount rotation.
+- **Z mount:** the Z stage is a **fixed column** bolted to the world at the
+  assembly centre (its footprint centred on the X carriage mid position),
+  standing on its −z end with the motor on top and the carriage hanging on the
+  −y side. It does not move with the XY slides — the X base and rails sweep
+  beneath it, with the column's base end floated ~2 mm above the tallest swept
+  feature. `z_slide`'s local axis `1 0 0` maps to world +Z through the mount
+  rotation.
 - **License placeholder:** `package.xml` declares BSD-3-Clause; update the
   maintainer email and license to your own before redistributing.

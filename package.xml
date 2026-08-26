@@ -4,7 +4,8 @@
   <version>0.1.0</version>
   <description>
     Parker 401200XR/401XR150 compound XYZ linear stage (2x 200 mm stroke
-    stacked in XY, plus a 150 mm vertical Z stage on the X carriage).
+    stacked in XY, plus a fixed 150 mm vertical Z column at the assembly
+    centre, independent of the XY motion).
 
     Contains the URDF (three prismatic slide joints centered on the physical
     mid-stroke, box collision geometry for Gazebo/MuJoCo, and mesh-derived

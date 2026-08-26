@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="2075" height="2398" viewBox="0 0 2075 2398" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace">
+<svg xmlns="http://www.w3.org/2000/svg" width="2068" height="1824" viewBox="0 0 2068 1824" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace">
 <defs>
   <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto">
     <path d="M0 0 L8 4 L0 8 z" fill="#1e88e5"/>
   </marker>
 </defs>
-<rect x="0" y="0" width="2075" height="2398" fill="#ffffff"/>
+<rect x="0" y="0" width="2068" height="1824" fill="#ffffff"/>
 <text x="48" y="26" font-size="17" font-weight="bold" fill="#1a1a1a">
 parkerstage  ·  401200XR compound XYZ stage  ·  kinematic tree</text>
 <text x="48" y="44" font-size="11" fill="#546e7a">
-Three 401XR stages stacked: Y slides along world +Y, X along world +X (200 mm stroke each, centered on mid-stroke), and the Z stage (401XR 150) stands on the X carriage and slides along world +Z (150 mm stroke).  36 links / 35 joints / 3 prismatic DOF.  Home: y_slide +11.9 mm, x_slide +11.9 mm, z_slide +11.9 mm.
+Three 401XR stages: Y slides along world +Y, X along world +X (200 mm stroke each, centered on mid-stroke), and the Z stage (401XR 150) is a FIXED column at the assembly centre sliding along world +Z (150 mm stroke), independent of the XY axes.  36 links / 35 joints / 3 prismatic DOF.  Home: y_slide +11.9 mm, x_slide +11.9 mm, z_slide +11.9 mm.
 </text>
 <path d="M 77.6 85 V 210 H 343.1 V 335" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
 <text x="343.1" y="202" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
@@ -35,12 +35,12 @@ Three 401XR stages stacked: Y slides along world +Y, X along world +X (200 mm st
 <text x="1522.1" y="776" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
 <tspan x="1522.1" dy="0">fastened_1  [fixed]</tspan>
 </text>
-<path d="M 1205.9 1303 V 1393 H 1889 V 1483" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
-<text x="1889" y="1385" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
-<tspan x="1889" dy="0">z_mounted_to_x_carriage  [fixed]</tspan>
+<path d="M 77.6 85 V 210 H 1885.1 V 335" fill="none" stroke="#90a4ae" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="1885.1" y="202" font-size="10" fill="#607d8b" font-weight="normal" text-anchor="middle">
+<tspan x="1885.1" dy="0">z_mounted_to_root  [fixed]</tspan>
 </text>
-<path d="M 1889 1674 V 1722 H 1838.3 V 1770" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
-<text x="1838.3" y="1692" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
+<path d="M 1885.1 526 V 574 H 1838.3 V 622" fill="none" stroke="#1e88e5" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="1838.3" y="544" font-size="10" fill="#1565c0" font-weight="bold" text-anchor="middle">
 <tspan x="1838.3" dy="0">z_slide  [prismatic]</tspan>
 <tspan x="1838.3" dy="11">axis 1 0 0  -&gt;  world +Z</tspan>
 <tspan x="1838.3" dy="11">q in [-0.05397, 0.09603] m</tspan>
@@ -68,40 +68,40 @@ Three 401XR stages stacked: Y slides along world +Y, X along world +X (200 mm st
 <text x="1448" y="991" font-size="10" fill="#455a64">· switch flag</text>
 <text x="1448" y="1005" font-size="10" fill="#455a64">· end caps</text>
 <text x="1448" y="1019" font-size="10" fill="#455a64">· end caps</text>
-<rect x="1750.2" y="1483" width="277.6" height="191" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
-<text x="1764.2" y="1506" font-size="13" font-weight="bold" fill="#1a1a1a">Z base · 401XR 150 on X carriage</text>
-<text x="1764.2" y="1523" font-size="10" fill="#455a64">· front ballscrew holder</text>
-<text x="1764.2" y="1537" font-size="10" fill="#455a64">· coupling housing</text>
-<text x="1764.2" y="1551" font-size="10" fill="#455a64">· back ballscrew holder</text>
-<text x="1764.2" y="1565" font-size="10" fill="#455a64">· seal</text>
-<text x="1764.2" y="1579" font-size="10" fill="#455a64">· 401XR 150 base</text>
-<text x="1764.2" y="1593" font-size="10" fill="#455a64">· home-limit switch (l2)</text>
-<text x="1764.2" y="1607" font-size="10" fill="#455a64">· home-limit switch (l2)</text>
-<text x="1764.2" y="1621" font-size="10" fill="#455a64">· encoder base</text>
-<text x="1764.2" y="1635" font-size="10" fill="#455a64">· drive screw</text>
-<text x="1764.2" y="1649" font-size="10" fill="#455a64">· 10851610 (screw nut)</text>
-<text x="1764.2" y="1663" font-size="10" fill="#455a64">· m2 sm-16 screw</text>
-<rect x="1750.2" y="1770" width="176.2" height="121" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
-<text x="1764.2" y="1793" font-size="13" font-weight="bold" fill="#1a1a1a">Z carriage assembly</text>
-<text x="1764.2" y="1810" font-size="10" fill="#455a64">· end caps</text>
-<text x="1764.2" y="1824" font-size="10" fill="#455a64">· end caps</text>
-<text x="1764.2" y="1838" font-size="10" fill="#455a64">· encoder base</text>
-<text x="1764.2" y="1852" font-size="10" fill="#455a64">· encoder</text>
-<text x="1764.2" y="1866" font-size="10" fill="#455a64">· home-limit switch</text>
-<text x="1764.2" y="1880" font-size="10" fill="#455a64">· switch flag</text>
-<rect x="48" y="2276" width="18" height="12" rx="2" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
-<text x="72" y="2287" font-size="10" fill="#455a64">root (world)</text>
-<rect x="170" y="2276" width="18" height="12" rx="2" fill="#eceff1" stroke="#546e7a" stroke-width="1.5"/>
-<text x="194" y="2287" font-size="10" fill="#455a64">fixed base</text>
-<rect x="280" y="2276" width="18" height="12" rx="2" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.5"/>
-<text x="304" y="2287" font-size="10" fill="#455a64">plate / table</text>
-<rect x="408" y="2276" width="18" height="12" rx="2" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
-<text x="432" y="2287" font-size="10" fill="#455a64">moving assembly</text>
-<rect x="548" y="2276" width="18" height="12" rx="2" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.5"/>
-<text x="572" y="2287" font-size="10" fill="#455a64">Z stage</text>
-<line x1="640" y1="2282" x2="658" y2="2282" stroke="#1e88e5" stroke-width="2.5"/>
-<text x="664" y="2287" font-size="10" fill="#455a64">prismatic joint</text>
-<line x1="780" y1="2282" x2="798" y2="2282" stroke="#90a4ae" stroke-width="2.5" stroke-dasharray="4 3"/>
-<text x="804" y="2287" font-size="10" fill="#455a64">fixed joint</text>
-<text x="48" y="2310" font-size="10" fill="#78909c">Fixed-joint chains are grouped into assembly boxes; every link is listed in tree order.</text>
+<rect x="1750.2" y="335" width="269.8" height="191" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
+<text x="1764.2" y="358" font-size="13" font-weight="bold" fill="#1a1a1a">Z base · 401XR 150 fixed column</text>
+<text x="1764.2" y="375" font-size="10" fill="#455a64">· front ballscrew holder</text>
+<text x="1764.2" y="389" font-size="10" fill="#455a64">· coupling housing</text>
+<text x="1764.2" y="403" font-size="10" fill="#455a64">· back ballscrew holder</text>
+<text x="1764.2" y="417" font-size="10" fill="#455a64">· seal</text>
+<text x="1764.2" y="431" font-size="10" fill="#455a64">· 401XR 150 base</text>
+<text x="1764.2" y="445" font-size="10" fill="#455a64">· home-limit switch (l2)</text>
+<text x="1764.2" y="459" font-size="10" fill="#455a64">· home-limit switch (l2)</text>
+<text x="1764.2" y="473" font-size="10" fill="#455a64">· encoder base</text>
+<text x="1764.2" y="487" font-size="10" fill="#455a64">· drive screw</text>
+<text x="1764.2" y="501" font-size="10" fill="#455a64">· 10851610 (screw nut)</text>
+<text x="1764.2" y="515" font-size="10" fill="#455a64">· m2 sm-16 screw</text>
+<rect x="1750.2" y="622" width="176.2" height="121" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
+<text x="1764.2" y="645" font-size="13" font-weight="bold" fill="#1a1a1a">Z carriage assembly</text>
+<text x="1764.2" y="662" font-size="10" fill="#455a64">· end caps</text>
+<text x="1764.2" y="676" font-size="10" fill="#455a64">· end caps</text>
+<text x="1764.2" y="690" font-size="10" fill="#455a64">· encoder base</text>
+<text x="1764.2" y="704" font-size="10" fill="#455a64">· encoder</text>
+<text x="1764.2" y="718" font-size="10" fill="#455a64">· home-limit switch</text>
+<text x="1764.2" y="732" font-size="10" fill="#455a64">· switch flag</text>
+<rect x="48" y="1702" width="18" height="12" rx="2" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+<text x="72" y="1713" font-size="10" fill="#455a64">root (world)</text>
+<rect x="170" y="1702" width="18" height="12" rx="2" fill="#eceff1" stroke="#546e7a" stroke-width="1.5"/>
+<text x="194" y="1713" font-size="10" fill="#455a64">fixed base</text>
+<rect x="280" y="1702" width="18" height="12" rx="2" fill="#fafafa" stroke="#9e9e9e" stroke-width="1.5"/>
+<text x="304" y="1713" font-size="10" fill="#455a64">plate / table</text>
+<rect x="408" y="1702" width="18" height="12" rx="2" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+<text x="432" y="1713" font-size="10" fill="#455a64">moving assembly</text>
+<rect x="548" y="1702" width="18" height="12" rx="2" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.5"/>
+<text x="572" y="1713" font-size="10" fill="#455a64">Z stage</text>
+<line x1="640" y1="1708" x2="658" y2="1708" stroke="#1e88e5" stroke-width="2.5"/>
+<text x="664" y="1713" font-size="10" fill="#455a64">prismatic joint</text>
+<line x1="780" y1="1708" x2="798" y2="1708" stroke="#90a4ae" stroke-width="2.5" stroke-dasharray="4 3"/>
+<text x="804" y="1713" font-size="10" fill="#455a64">fixed joint</text>
+<text x="48" y="1736" font-size="10" fill="#78909c">Fixed-joint chains are grouped into assembly boxes; every link is listed in tree order.</text>
 </svg>

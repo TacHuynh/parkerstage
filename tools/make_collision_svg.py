@@ -164,9 +164,10 @@ def main():
             r[1][0] += hi
         return r
 
-    z_links_all = {n for n in links if n.startswith("z_")}
-    moving_x = set(X_ASSEMBLY) | z_links_all         # rides y_slide AND x_slide (Z stage on the X carriage)
-    moving_y = (set(Y_ASSEMBLY) | {"plate", "401200xr__3_"}) | z_links_all  # rides y_slide
+    # the Z stage is a FIXED column at the assembly centre: it moves with
+    # neither slide (only its carriage rides z_slide, which is vertical)
+    moving_x = set(X_ASSEMBLY)
+    moving_y = set(Y_ASSEMBLY) | {"plate", "401200xr__3_"}
 
     # extreme configs for dashed outlines
     ext = []
@@ -413,7 +414,7 @@ def main():
     lx = 60
     order = [("Y base", "fixed to root"), ("X base", "bolted to plate"), ("plate", "Y carriage + table"),
              ("Y assembly", "moves with y_slide"), ("X assembly", "moves with y_slide + x_slide"),
-             ("Z stage", "mounted on X carriage · rides y_slide + x_slide")]
+             ("Z stage", "fixed column at assembly centre · only z_slide moves")]
     for grp, note in order:
         fill, stroke = GROUP[grp]
         add('<rect x="%d" y="%d" width="18" height="12" rx="2" fill="%s" '
