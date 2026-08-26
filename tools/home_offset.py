@@ -39,16 +39,22 @@ def link_bbox(name):
     return [mn[i] + oxyz[i] for i in range(3)], [mx[i] + oxyz[i] for i in range(3)]
 
 
-def bbox_in(name, base):
-    """Link visual bbox expressed in `base`'s frame."""
+def bbox_in(name, base, poses=None):
+    """Link visual bbox expressed in `base`'s frame.
+
+    `poses` defaults to the raw Onshape world poses; pass the X-flipped pose
+    map (R.poses_xflipped()) for the X stage so measurements reflect the
+    flipped carriage that the rebuilt URDF actually contains."""
+    if poses is None:
+        poses = R.poses
     mn, mx = link_bbox(name)
-    Mb = R.poses[base]
+    Mb = poses[base]
     corners = []
     for sx in (0, 1):
         for sy in (0, 1):
             for sz in (0, 1):
                 p = [mn[i] if s == 0 else mx[i] for i, s in enumerate((sx, sy, sz))]
-                corners.append(R.vmul(R.inv(Mb), R.vmul(R.poses[name], p)))
+                corners.append(R.vmul(R.inv(Mb), R.vmul(poses[name], p)))
     return ([min(p[i] for p in corners) for i in range(3)],
             [max(p[i] for p in corners) for i in range(3)])
 
@@ -57,27 +63,31 @@ def center(lo, hi):
     return [(lo[i] + hi[i]) / 2 for i in range(3)]
 
 
-def stage(axis, base, carriage, endcap_a, endcap_b, switch, flag, tag):
-    """axis: local index (0=x,1=y,2=z) of the slide direction."""
-    bmn, bmx = bbox_in(base, base)
+def stage(axis, base, carriage, endcap_a, endcap_b, switch, flag, tag, poses=None):
+    """axis: local index (0=x,1=y,2=z) of the slide direction.
+    `poses` defaults to the raw Onshape poses; pass the X-flipped pose map for
+    the X stage (see bbox_in)."""
+    if poses is None:
+        poses = R.poses
+    bmn, bmx = bbox_in(base, base, poses)
     base_c = center(bmn, bmx)[axis]
 
     # carriage center is the sliding-body reference (the end caps on the Y
     # stage are symmetric about the carriage centre; the X-stage export is
     # missing one end cap, so the carriage itself is the reference there)
-    cmn, cmx = bbox_in(carriage, base)
+    cmn, cmx = bbox_in(carriage, base, poses)
     car_c = center(cmn, cmx)[axis]
 
     # end-cap symmetry check (Y stage): assembly centre == carriage centre?
-    lo, hi = bbox_in(carriage, base)
+    lo, hi = bbox_in(carriage, base, poses)
     for ec in (endcap_a, endcap_b):
-        elo, ehi = bbox_in(ec, base)
+        elo, ehi = bbox_in(ec, base, poses)
         lo = [min(lo[i], elo[i]) for i in range(3)]
         hi = [max(hi[i], ehi[i]) for i in range(3)]
     asm_c = center(lo, hi)[axis]
 
-    smn, smx = bbox_in(switch, base)
-    fmn, fmx = bbox_in(flag, base)
+    smn, smx = bbox_in(switch, base, poses)
+    fmn, fmx = bbox_in(flag, base, poses)
     sw_c = center(smn, smx)[axis]
     fl_c = center(fmn, fmx)[axis]
 
@@ -104,12 +114,15 @@ stage(1, "401200xr__1_",
       "401xr___switch_flag__401xr___switch_flag_1",
       "Y stage (bottom)")
 
-# X stage (base2): slide along base2 local y (mirrored part; the export has
-# only one end cap on the X carriage, so the carriage itself is the reference)
+# X stage (base2): slide along base2 local y.  The rebuilt URDF flips the X
+# carriage to match the Y stage, so measure with the flipped pose map; the
+# export has only one end cap on the X carriage, so the carriage is the
+# reference there.
 stage(1, "401200xr__3_",
       "401xr___carriage__401xr___carriage",
       "401xr___carriage_end_caps__401xr___carriage_end_caps_1",
       "401xr___carriage_end_caps__401xr___carriage_end_caps_1",
       "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
       "401xr___switch_flag__401xr___switch_flag",
-      "X stage (top)")
+      "X stage (top)",
+      poses=R.poses_xflipped())

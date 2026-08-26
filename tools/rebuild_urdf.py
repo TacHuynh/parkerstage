@@ -40,10 +40,12 @@ TRAVEL = 0.10  # 200 mm stroke -> +/- 0.10 m about mid-stroke
 MID_STROKE = 0.020733
 # Home-limit switch: the carriage flag trips the switch when the flag centre
 # aligns with the switch centre.  Switch at base-y -21.838 mm, flag at
-# carriage-y -33.750 mm -> q_home = +11.9 mm (Y stage).  The X stage is the
-# mirrored part: switch at base2-y -45.663 mm -> q_home = -11.9 mm.
+# carriage-y -33.750 mm -> q_home = +11.9 mm (Y stage).  After the X carriage
+# flip the X stage carries its switch/flag posed exactly like the Y stage
+# (switch at base2-y -21.837 mm, flag at carriage-y -33.750 mm), so the X home
+# trips at the same +11.9 mm.
 HOME_Y = 0.011912
-HOME_X = -0.011913
+HOME_X = 0.011913
 EFFORT = 1.0
 VELOCITY = 1.0
 DENSITY = 2700.0  # kg/m^3, aluminum (Parker 401XR bases/carriages are aluminum)
@@ -175,6 +177,12 @@ def joint_axis(parent, child, world_axis):
     axis_joint = R_origin^T . R_parent^T . axis_world.
     """
     _, _, M = rel(parent, child)
+    return joint_axis_from_origin(M, parent, world_axis)
+
+
+def joint_axis_from_origin(M, parent, world_axis):
+    """Like joint_axis, but taking an explicit parent->child origin transform M
+    (e.g. one that has been flipped) instead of the untouched geometry."""
     R_origin = [[M[i][j] for j in range(3)] for i in range(3)]
     R_origin_T = [[R_origin[j][i] for j in range(3)] for i in range(3)]
     R_parent = [[poses[parent][i][j] for j in range(3)] for i in range(3)]
@@ -186,6 +194,67 @@ BASE1 = "401200xr__1_"
 BASE2 = "401200xr__3_"
 Y_CHILD = "plate"
 X_CHILD = "401xr___encoder__401xr___encoder"
+
+# ---- X-stage carriage flip -------------------------------------------------
+# The Onshape export mounted the X-stage carriage 180 deg mirrored vs the
+# Y-stage carriage (encoder/switch on opposite base sides).  We rotate the
+# whole X carriage subtree 180 deg about the vertical (base2 z) axis so it is
+# posed exactly like the Y carriage.  Carriage stays upright; the horizontal
+# encoder/switch sides swap; travel stays world +X.
+X_FLIP_GROUP = {
+    "401xr___encoder__401xr___encoder",
+    "401xr___carriage__401xr___carriage",
+    "401xr___carriage_end_caps__401xr___carriage_end_caps_1",
+    "401xr___encoder_base_2__401xr___encoder_base_2",
+    "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
+    "401xr___switch_flag__401xr___switch_flag",
+}
+
+
+def _mesh_center_y(name, base, pmap=None):
+    """Mesh-bbox centre of link `name` along `base`'s y axis, in base coords.
+    (Mirrors tools/home_offset.py: the carriage mesh centre is the sliding-body
+    reference, and mid-stroke / home are measured from it.)  Pass the flipped
+    pose map (poses_xflipped()) to measure the X stage as the rebuilt URDF
+    actually poses it."""
+    if pmap is None:
+        pmap = poses
+    l = links[name]
+    vo = l.find("visual/origin")
+    oxyz = [float(x) for x in vo.get("xyz").split()]
+    fn = l.find("visual/geometry/mesh").get("filename").split("/")[-1]
+    from mesh_inertia import read_triangles  # noqa: E402
+    tris = read_triangles(os.path.join(MESH_DIR, fn))
+    mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+    mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+    Mb = inv(pmap[base])
+    cs = []
+    for sx in (0, 1):
+        for sy in (0, 1):
+            for sz in (0, 1):
+                p = [mn[i] + oxyz[i] if s == 0 else mx[i] + oxyz[i] for i, s in enumerate((sx, sy, sz))]
+                cs.append(vmul(Mb, vmul(pmap[name], p)))
+    lo = [min(c[i] for c in cs) for i in range(3)]
+    hi = [max(c[i] for c in cs) for i in range(3)]
+    return (lo[1] + hi[1]) / 2.0
+
+
+# Rotate about the X carriage's own centre (base2-y through the carriage), not
+# the mount, so the flipped carriage keeps the same along-slide position as the
+# Y carriage (carriage centre y = -33.75 mm in each stage frame -> same q_mid).
+X_CARRIAGE = "401xr___carriage__401xr___carriage"
+X_CENTER_Y = _mesh_center_y(X_CARRIAGE, BASE2)
+XFLIP4 = t4(rz(math.pi), [0.0, 2.0 * X_CENTER_Y, 0.0])  # 180 deg about base2 z axis thru (0, X_CENTER_Y, z)
+
+
+def poses_xflipped():
+    """World pose map identical to `poses`, but X-stage subtree links are given
+    their post-flip world poses (used for collision-box placement and the
+    pose-preservation re-check)."""
+    # flipped world transform: root -> base2 -> (flip about base2 z) -> base2 -> world
+    world_flip = mul(poses[BASE2], mul(XFLIP4, inv(poses[BASE2])))
+    return {name: (mul(world_flip, M) if name in X_FLIP_GROUP else M)
+            for name, M in poses.items()}
 
 # ---------------------------------------------------------------- build new
 
@@ -241,8 +310,23 @@ t, rpy, _ = rel(Y_CHILD, BASE2)
 new_root.append(make_joint("base2_mounted_to_plate", "fixed", Y_CHILD, BASE2, t, rpy))
 
 # 4) X slide: base2 -> encoder (top stage carriage group)
-t, rpy, _ = rel(BASE2, X_CHILD)
-x_axis = joint_axis(BASE2, X_CHILD, (1, 0, 0))  # world +X
+#
+# The Onshape export mounted the X-stage carriage as a 180 deg mirror of the
+# Y-stage carriage relative to its (identical) base: encoder toward base -x
+# and home-limit switch/flag toward base +x, whereas the Y carriage has the
+# encoder toward base +x and switch/flag toward base -x.  Flip the X-stage
+# carriage subtree 180 deg about the vertical (base z) axis through the
+# carriage centre so it is posed exactly like the Y carriage (encoder toward
+# base +x, switch/flag toward base -x).  Carriage stays upright and keeps its
+# along-slide position; only the horizontal (encoder/switch) sides swap, so
+# the travel axis still points along world +X.
+t, rpy, M = rel(BASE2, X_CHILD)
+Mx = mul(XFLIP4, M)  # base2 -> X child, flipped 180 deg about the vertical through the carriage centre
+# the mount point itself moves through the flip -> update the joint origin
+# translation (rotation about (x=0, y=X_CENTER_Y) maps y -> 2*X_CENTER_Y - y)
+t = [t[0], 2.0 * X_CENTER_Y - t[1], t[2]]
+rpy = rpy_of(Mx)
+x_axis = joint_axis_from_origin(Mx, BASE2, (1, 0, 0))  # world +X
 new_root.append(make_joint(
     "x_slide", "prismatic", BASE2, X_CHILD, t, rpy, axis=x_axis,
     limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
@@ -386,11 +470,21 @@ COLLISION = {
 
 # link-frame description of every collision box: (link, ref, center, rpy, size)
 def collision_boxes():
+    pf = poses_xflipped()  # X-group links given their post-flip world pose
     out = {}
     for link, boxes in COLLISION.items():
         lst = []
         for (ref, mn, mx) in boxes:
-            M = mul(inv(poses[link]), poses[ref])  # ref -> link
+            if link in X_FLIP_GROUP:
+                # the X-subtree was flipped 180 deg about the vertical, so the
+                # box (defined in base2 frame) moves with it: map its 8 corners
+                # through XFLIP4 and retake the AABB.
+                cps = [vmul(XFLIP4, [mx[i] if s else mn[i] for i, s in enumerate(sw)]) for sw in
+                       [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1],
+                        [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]]]
+                mn = [min(c[i] for c in cps) for i in range(3)]
+                mx = [max(c[i] for c in cps) for i in range(3)]
+            M = mul(inv(pf[link]), poses[ref])  # ref -> link (flipped link pose for X group)
             c = vmul(M, [(mn[i] + mx[i]) / 2 for i in range(3)])
             Rm = [[M[i][j] for j in range(3)] for i in range(3)]
             lst.append((ref, c, rpy_of(Rm), [mx[i] - mn[i] for i in range(3)]))
@@ -555,6 +649,57 @@ def verify():
         ok = False
     else:
         print("HOME in travel: Y %+.4f m, X %+.4f m (range [%+.4f, %+.4f])" % (HOME_Y, HOME_X, lo, hi))
+
+    # both slide joints must declare exactly the Parker 401200XR 200 mm stroke
+    # (and be identical to each other).  The 0.20 m is the *spec* value, kept
+    # as a literal here so the check still bites if TRAVEL (and therefore the
+    # generated limits) is ever changed away from the 200 mm spec.
+    STROKE_SPEC = 0.20  # m, Parker 401200XR
+    strokes = {}
+    for jn in ("y_slide", "x_slide"):
+        for jj in new_root.findall("joint"):
+            if jj.get("name") == jn:
+                lim = jj.find("limit")
+                strokes[jn] = float(lim.get("upper")) - float(lim.get("lower"))
+    if any(jn not in strokes for jn in ("y_slide", "x_slide")):
+        print("STROKE MISSING joint: %s" % [jn for jn in ("y_slide", "x_slide") if jn not in strokes])
+        ok = False
+    else:
+        for jn, st in strokes.items():
+            if abs(st - STROKE_SPEC) > 1e-6:
+                print("STROKE MISMATCH %s: %.4f m (expected %.4f m = 200 mm)" % (jn, st, STROKE_SPEC))
+                ok = False
+        if abs(strokes["y_slide"] - strokes["x_slide"]) > 1e-6:
+            print("STROKE MISMATCH y_slide vs x_slide: %.4f m vs %.4f m"
+                  % (strokes["y_slide"], strokes["x_slide"]))
+            ok = False
+        print("STROKE: %s" % ", ".join("%s %.1f mm" % (jn, st * 1e3) for jn, st in strokes.items()))
+
+    # both slides must be centred on the *physical* mid-stroke: the declared
+    # MID_STROKE constant and the generated limits must both agree with the
+    # geometry (base centre - carriage centre, measured like home_offset.py),
+    # so the travel range can't shift away from the physical mid-stroke.
+    MID_TOL = 2e-4  # m, absorbs mesh-bbox rounding (~0.002 mm); catches real drift
+    y_car = "401xr___carriage__401xr___carriage_1"
+    phys = {}
+    for tag, base, car, pmap in (("Y", BASE1, y_car, poses),
+                                 ("X", BASE2, X_CARRIAGE, poses_xflipped())):
+        phys[tag] = _mesh_center_y(base, base, pmap) - _mesh_center_y(car, base, pmap)
+        if abs(phys[tag] - MID_STROKE) > MID_TOL:
+            print("MID-STROKE MISMATCH %s: physical %+.4f m vs declared %+.4f m"
+                  % (tag, phys[tag], MID_STROKE))
+            ok = False
+    for jn, st in strokes.items():
+        lo = None
+        for jj in new_root.findall("joint"):
+            if jj.get("name") == jn:
+                lim = jj.find("limit")
+                lo = (float(lim.get("lower")) + float(lim.get("upper"))) / 2.0
+        if lo is None or abs(lo - MID_STROKE) > 1e-6:
+            print("MID-STROKE MISMATCH %s limits: centre %+.4f m vs declared %+.4f m" % (jn, lo, MID_STROKE))
+            ok = False
+    print("MID-STROKE: %s" % ", ".join("%s physical %+.3f mm / limits centred %+.3f mm" % (t, phys[t] * 1e3, MID_STROKE * 1e3)
+                                        for t in ("Y", "X")))
     n_bad = 0
     min_report = 5
     for qy in grid:
@@ -571,15 +716,50 @@ def verify():
             sum(len(v) for v in box_world_corners.values()) ** 2, len(grid) ** 2))
 
     z0 = poses_at({"y_slide": 0.0, "x_slide": 0.0})
-    # pose preservation at zero config vs original export
+    # pose preservation at zero config vs original export.  The X-stage carriage
+    # subtree is deliberately flipped (X_FLIP_GROUP), so its links no longer match
+    # the raw export; those are re-checked against the intended flipped pose below.
     for name, M in poses.items():
-        if name.startswith("planar_"):
+        if name.startswith("planar_") or name in X_FLIP_GROUP:
             continue
         a = [z0[name][i][3] for i in range(3)]
         b = [M[i][3] for i in range(3)]
         if max(abs(x - y) for x, y in zip(a, b)) > 1e-6:
             print("POSE MISMATCH at q=0: %s %s vs %s" % (name, a, b))
             ok = False
+    # the flipped X subtree must sit exactly at its post-flip world pose
+    pf = poses_xflipped()
+    for name in X_FLIP_GROUP:
+        a = [z0[name][i][3] for i in range(3)]
+        b = [pf[name][i][3] for i in range(3)]
+        if max(abs(x - y) for x, y in zip(a, b)) > 1e-6:
+            print("X-FLIP POSE MISMATCH: %s %s vs %s" % (name, a, b))
+            ok = False
+
+    # flipped X collision boxes must sit on the *orientation* the Y carriage has in
+    # its own base frame: encoder/readhead toward base +x, home-limit switch/flag
+    # toward base -x, same z band.  (The y extent differs because the two stages
+    # are stacked at different y offsets; the flip preserves the assembly's own
+    # geometry, so only the x/z side placement is checked.)
+    def _xbox(mn, mx):
+        cps = [vmul(XFLIP4, [mx[i] if s else mn[i] for i, s in enumerate(sw)]) for sw in
+               [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1],
+                [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]]]
+        return [min(c[i] for c in cps) for i in range(3)], \
+               [max(c[i] for c in cps) for i in range(3)]
+    XVS_Y = {"401xr___encoder__401xr___encoder": "401xr___encoder__401xr___encoder_1",
+             "401xr___carriage_end_caps__401xr___carriage_end_caps_1": "401xr___carriage_end_caps__401xr___carriage_end_caps_1_1",
+             "401xr___encoder_base_2__401xr___encoder_base_2": "401xr___encoder_base_2__401xr___encoder_base_2_1",
+             "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch": "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch_1",
+             "401xr___switch_flag__401xr___switch_flag": "401xr___switch_flag__401xr___switch_flag_1"}
+    for xl, yl in XVS_Y.items():
+        for (_, fx_mn, fx_mx), (_, fy_mn, fy_mx) in zip(COLLISION[xl], COLLISION[yl]):
+            xmn, xmx = _xbox(fx_mn, fx_mx)
+            if max(abs(xmn[0] - fy_mn[0]), abs(xmx[0] - fy_mx[0]),
+                   abs(xmn[2] - fy_mn[2]), abs(xmx[2] - fy_mx[2])) > 0.002:
+                print("X-FLIP BOX MISMATCH %s vs %s: X%s Y%s" % (xl, yl, [xmn[0], xmn[2], xmx[0], xmx[2]],
+                                                                 [fy_mn[0], fy_mn[2], fy_mx[0], fy_mx[2]]))
+                ok = False
     # y_slide moves Y group along world Y only
     zy = poses_at({"y_slide": 0.05, "x_slide": 0.0})
     for name in Y_GROUP:

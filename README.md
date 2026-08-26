@@ -53,8 +53,9 @@ Regenerate with `python3 tools/make_collision_svg.py`.
   group.
 - **Limits** are centered on the physical mid-stroke, not the CAD zero
   configuration: both slides are `[-0.0793, +0.1207]` m about `q = +0.0207`
-  (the 200 mm stroke). The home-limit switches trip at **Y = +11.9 mm**,
-  **X = −11.9 mm** (flag centered on switch) — inside the travel range.
+  (the 200 mm stroke). The home-limit switches trip at **Y = +11.9 mm** and
+  **X = +11.9 mm** (flag centered on switch; the flipped X carriage trips on
+  the same side as Y) — inside the travel range.
 - **Collisions:** 20 boxes across 15 links, built from the clean interfaces
   with explicit gaps (the raw CAD interpenetrates in several places). Verified
   zero overlaps across 25 travel configurations.
@@ -174,5 +175,12 @@ and view-preset buttons for inspecting individual parts.
   carries a stray end-cap visual (kept, harmless). Onshape computed the part
   COMs correctly but with bogus densities — that is what `rebuild_urdf.py`
   fixes.
+- **X-carriage flip:** the raw export had the X-stage carriage mounted as a
+  180° mirror of the Y-stage carriage (encoder/readhead toward base −x and
+  home-limit switch/flag toward base +x). `rebuild_urdf.py` rotates the whole
+  X carriage subtree 180° about the vertical axis through its mount so it is
+  posed exactly like the Y carriage (encoder toward base +x, switch/flag
+  toward base −x); carriage stays upright and travel still follows world +X.
+  The collision boxes and the two doc SVGs are regenerated to match.
 - **License placeholder:** `package.xml` declares BSD-3-Clause; update the
   maintainer email and license to your own before redistributing.
