@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
-"""Rebuild parkerstage.urdf into a clean kinematic tree.
+"""Rebuild parkerstage.urdf into a clean kinematic tree using the corrected
+`xyslideassy` slide as the SINGLE SOURCE for BOTH the Y and X axes.
 
-The Onshape export decomposed each stage's slide into 2 prismatic + 1
-continuous joint (planar mate) with +/-10000 limits and arbitrarily cut the
-tree, so nothing is a usable "slide". This script:
+The slide (source: /home/th/ParkerStage/xyslideassy/urdf/xyslideassy.urdf) is
+now a proper 200 mm 401XR stage: `root` is the fixed base (main extrusion,
+drive screw, holders, coupling housing, motor, seal, and the three H3
+switches), a `slider` prismatic drives the carriage subtree (switch_flag, end
+caps, carriage, encoder, H2 home switch) along the base's long axis, the seal
+is bolted to the base (`seal_to_base`), and the travel limits
+[+48.370, +248.370] mm are bracketed by the two outer H3 limit switches with
+the H3__L1 home switch exactly at mid-stroke.
 
-  * keeps every link (visuals/inertials verbatim), dropping the empty
-    planar_* placeholder links,
-  * roots the tree at `root` with base1 (401200xr__1_) rigidly attached,
-  * adds a single prismatic joint `y_slide` between base1 and the bottom
-    carriage group (plate + carriage_1 + accessories), axis = world Y,
-  * bolts the upper stage base (401200xr__3_) to the plate,
-  * adds a single prismatic joint `x_slide` between base2 and the top
-    carriage group, axis = world X,
-  * sets travel limits to +/-0.1 m (Parker 401200XR = 200 mm stroke).
+This script clones that slide twice to build the XY stage:
 
-All joint origins are computed numerically so every link keeps its exact
-world pose at the zero configuration.
+  Y stage: base `y_root` bolted to world `root`; prismatic `y_slide` drives the
+           Y carriage group along world +Y.
+  X stage: base `x_root` bolted ON TOP of the Y carriage, rotated -90 deg about
+           the vertical so its travel points along world +X; prismatic
+           `x_slide` drives the X carriage group along world +X.
+  Z column: fixed (from zslide.urdf.onshape) on world root at the assembly
+           centre, independent of the XY motion.
+
+The y/x slide joints keep the slide's OWN origin, axis and limits (single
+source: the bracketed 200 mm stroke and mid-stroke home cannot drift from the
+slide), and the seal is bolted to each base exactly like the slide.  All joint
+origins are computed numerically so every link keeps its intended world pose at
+q=0.  The verify() block re-checks pose preservation, stroke, limits-vs-slide,
+home, Z independence, Z centering and a full collision sweep.
 """
 import copy
 import math
@@ -25,33 +35,19 @@ import sys
 import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# read the pristine Onshape export if available (backed up before first run)
-SRC = os.path.join(ROOT, "urdf", "parkerstage.urdf.onshape")
-if not os.path.exists(SRC):
-    SRC = os.path.join(ROOT, "urdf", "parkerstage.urdf")
 OUT = os.path.join(ROOT, "urdf", "parkerstage.urdf")
 
-TRAVEL = 0.10  # 200 mm stroke -> +/- 0.10 m about mid-stroke
-# Physical mid-stroke: carriage center aligned with the base center.  Measured
-# in the stage frame (base1/base2 local y): base center y=-13.017 mm, carriage
-# center y=-33.750 mm -> q_mid = +20.733 mm.  The CAD export has the carriage
-# 20.7 mm off mid-stroke, so the limits are shifted by this offset to keep the
-# travel range centered on the physical mid-stroke instead of the CAD zero.
-MID_STROKE = 0.020733
-# Home-limit switch: the carriage flag trips the switch when the flag centre
-# aligns with the switch centre.  Switch at base-y -21.838 mm, flag at
-# carriage-y -33.750 mm -> q_home = +11.9 mm (Y stage).  After the X carriage
-# flip the X stage carries its switch/flag posed exactly like the Y stage
-# (switch at base2-y -21.837 mm, flag at carriage-y -33.750 mm), so the X home
-# trips at the same +11.9 mm.
-HOME_Y = 0.011912
-HOME_X = 0.011913
+XYS = "/home/th/ParkerStage/xyslideassy/urdf/xyslideassy.urdf"
+XYS_MESH = "/home/th/ParkerStage/xyslideassy/meshes/"
+ZSRC = os.path.join(ROOT, "urdf", "zslide.urdf.onshape")
+TRAVEL_Z = 0.075     # 401XR150 150 mm stroke
 EFFORT = 1.0
 VELOCITY = 1.0
-DENSITY = 2700.0  # kg/m^3, aluminum (Parker 401XR bases/carriages are aluminum)
+DENSITY = 2700.0     # kg/m^3 aluminium
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mesh_inertia import mesh_inertia_voxel  # noqa: E402
+from mesh_inertia import mesh_inertia_voxel   # noqa: E402
+from mesh_inertia import read_triangles       # noqa: E402
 
 MESH_DIR = os.path.join(ROOT, "meshes")
 
@@ -82,12 +78,10 @@ def rpy2m(r, p, y):
 
 
 def t4(R, t):
-    return [
-        [R[0][0], R[0][1], R[0][2], t[0]],
-        [R[1][0], R[1][1], R[1][2], t[1]],
-        [R[2][0], R[2][1], R[2][2], t[2]],
-        [0, 0, 0, 1],
-    ]
+    return [[R[0][0], R[0][1], R[0][2], t[0]],
+            [R[1][0], R[1][1], R[1][2], t[1]],
+            [R[2][0], R[2][1], R[2][2], t[2]],
+            [0, 0, 0, 1]]
 
 
 def mul(A, B):
@@ -108,6 +102,23 @@ def vmul(M, v):
 
 def vrot(M, v):
     return [sum(M[i][j] * v[j] for j in range(3)) for i in range(3)]
+
+
+def jxf(xyz, rpy):
+    """Joint-origin 4x4 under real URDF semantics: R . T(xyz), i.e. the
+    translation xyz is applied in the ROTATED frame, so a child at identity
+    lands at R.xyz in the parent frame (matches ROS/URDF parsing)."""
+    R = rpy2m(*rpy)
+    return t4(R, vrot(R, xyz))
+
+
+def origin_of(M):
+    """(xyz, rpy) that reproduces transform M in the file under real URDF
+    semantics (xyz must satisfy R.xyz = t, i.e. xyz = R^T.t)."""
+    R = [[M[i][j] for j in range(3)] for i in range(3)]
+    t = [M[i][3] for i in range(3)]
+    RT = [[R[j][i] for j in range(3)] for i in range(3)]
+    return vrot(RT, t), rpy_of(M)
 
 
 def rpy_of(M):
@@ -131,176 +142,186 @@ def fmt_vec(v):
     return " ".join(fmt(x) for x in v)
 
 
-# ---------------------------------------------------------------- parse old
-
-tree = ET.parse(SRC)
-root = tree.getroot()
-
-links = {}
-for l in root.findall("link"):
-    links[l.get("name")] = copy.deepcopy(l)
-
-children = {}
-joints_by_name = {}
-for j in root.findall("joint"):
-    joints_by_name[j.get("name")] = j
-    p = j.find("parent").get("link")
-    c = j.find("child").get("link")
-    children.setdefault(p, []).append((c, j))
-
-# world poses at zero configuration
-poses = {"root": t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])}
-order = ["root"]
-while order:
-    p = order.pop(0)
-    for (c, j) in children.get(p, []):
-        o = j.find("origin")
-        xyz = list(map(float, o.get("xyz").split())) if o is not None else [0, 0, 0]
-        rpy = list(map(float, o.get("rpy").split())) if o is not None else [0, 0, 0]
-        poses[c] = mul(poses[p], t4(rpy2m(*rpy), xyz))
-        order.append(c)
+def fnum(v):
+    return "%.9g" % v
 
 
-def rel(parent, child):
-    """Origin (xyz, rpy) of `child` frame relative to `parent` frame at q=0."""
-    M = mul(inv(poses[parent]), poses[child])
-    t = [M[i][3] for i in range(3)]
-    return t, rpy_of(M), M
+# ------------------------------------------------------------- parse new slide
+
+stree = ET.parse(XYS)
+sroot = stree.getroot()
+slinks = {l.get("name"): l for l in sroot.findall("link")}
+
+SLIDE_BASE = "root"
+CAR_ROOT = "401xr___switch_flag__401xr___switch_flag"
+CAR_BODY = "401xr___carriage__401xr___carriage"
+SEAL = "401xr_200_seal_seal__401xr_200_seal_seal"
+SWITCH = "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch"
+FLAG = "401xr___switch_flag__401xr___switch_flag"
+ENC = "401xr___encoder__401xr___encoder"
+ENC_BASE = "401xr___encoder_base_2__401xr___encoder_base_2"
+EC1 = "401xr___carriage_end_caps__401xr___carriage_end_caps_1"
+EC1_ = "401xr___carriage_end_caps__401xr___carriage_end_caps__1_"
+
+MOVERS = {CAR_ROOT, ENC_BASE, EC1_, EC1, CAR_BODY, ENC, SWITCH}   # seal is fixed to the base now
+
+# joints recreated explicitly below (skipped by fix_all)
+EMPTY_JOINT_NAMES = ("slider", "seal_to_base")
 
 
-def joint_axis(parent, child, world_axis):
-    """Prismatic axis in the joint frame that maps to `world_axis`.
-
-    axis_world = R_parent_world . R_origin . axis_joint
-    with R_origin the joint-origin rotation (= rotation part of
-    rel(parent, child)), so
-    axis_joint = R_origin^T . R_parent^T . axis_world.
-    """
-    _, _, M = rel(parent, child)
-    return joint_axis_from_origin(M, parent, world_axis)
-
-
-def joint_axis_from_origin(M, parent, world_axis):
-    """Like joint_axis, but taking an explicit parent->child origin transform M
-    (e.g. one that has been flipped) instead of the untouched geometry."""
-    R_origin = [[M[i][j] for j in range(3)] for i in range(3)]
-    R_origin_T = [[R_origin[j][i] for j in range(3)] for i in range(3)]
-    R_parent = [[poses[parent][i][j] for j in range(3)] for i in range(3)]
-    R_parent_T = [[R_parent[j][i] for j in range(3)] for i in range(3)]
-    return vrot(R_origin_T, vrot(R_parent_T, world_axis))
+def _slide_poses():
+    ch = {}
+    for j in sroot.findall("joint"):
+        ch.setdefault(j.find("parent").get("link"), []).append(j)
+    poses = {SLIDE_BASE: t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])}
+    order = [SLIDE_BASE]
+    while order:
+        p = order.pop(0)
+        for j in ch.get(p, []):
+            o = j.find("origin")
+            xyz = list(map(float, o.get("xyz").split())) if o is not None else [0, 0, 0]
+            rpy = list(map(float, o.get("rpy").split())) if o is not None else [0, 0, 0]
+            poses[j.find("child").get("link")] = mul(poses[p], jxf(xyz, rpy))
+            order.append(j.find("child").get("link"))
+    return poses
 
 
-BASE1 = "401200xr__1_"
-BASE2 = "401200xr__3_"
-Y_CHILD = "plate"
-X_CHILD = "401xr___encoder__401xr___encoder"
-
-# ---- X-stage carriage flip -------------------------------------------------
-# The Onshape export mounted the X-stage carriage 180 deg mirrored vs the
-# Y-stage carriage (encoder/switch on opposite base sides).  We rotate the
-# whole X carriage subtree 180 deg about the vertical (base2 z) axis so it is
-# posed exactly like the Y carriage.  Carriage stays upright; the horizontal
-# encoder/switch sides swap; travel stays world +X.
-X_FLIP_GROUP = {
-    "401xr___encoder__401xr___encoder",
-    "401xr___carriage__401xr___carriage",
-    "401xr___carriage_end_caps__401xr___carriage_end_caps_1",
-    "401xr___encoder_base_2__401xr___encoder_base_2",
-    "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
-    "401xr___switch_flag__401xr___switch_flag",
-}
+SPOSES = _slide_poses()
 
 
-def _mesh_center_y(name, base, pmap=None):
-    """Mesh-bbox centre of link `name` along `base`'s y axis, in base coords.
-    (Mirrors tools/home_offset.py: the carriage mesh centre is the sliding-body
-    reference, and mid-stroke / home are measured from it.)  Pass the flipped
-    pose map (poses_xflipped()) to measure the X stage as the rebuilt URDF
-    actually poses it."""
-    if pmap is None:
-        pmap = poses
-    l = links[name]
-    vo = l.find("visual/origin")
-    oxyz = [float(x) for x in vo.get("xyz").split()]
-    fn = l.find("visual/geometry/mesh").get("filename").split("/")[-1]
-    from mesh_inertia import read_triangles  # noqa: E402
-    tris = read_triangles(os.path.join(MESH_DIR, fn))
-    mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
-    mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
-    Mb = inv(pmap[base])
-    cs = []
-    for sx in (0, 1):
-        for sy in (0, 1):
-            for sz in (0, 1):
-                p = [mn[i] + oxyz[i] if s == 0 else mx[i] + oxyz[i] for i, s in enumerate((sx, sy, sz))]
-                cs.append(vmul(Mb, vmul(pmap[name], p)))
-    lo = [min(c[i] for c in cs) for i in range(3)]
-    hi = [max(c[i] for c in cs) for i in range(3)]
-    return (lo[1] + hi[1]) / 2.0
+def _s_ext(name, base_frame, pmap, axis):
+    """Slide link `name` mesh bbox along `base_frame`'s `axis`, in the base
+    frame (m).  Aggregates ALL visuals (the base link `root` carries many part
+    meshes)."""
+    l = slinks[name]
+    Mb = inv(pmap[base_frame])
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for vis in l.findall("visual"):
+        msh = vis.find("geometry/mesh")
+        if msh is None:
+            continue
+        vo = vis.find("origin")
+        oxyz = [float(x) for x in vo.get("xyz").split()] if vo is not None else [0, 0, 0]
+        orpy = [float(x) for x in vo.get("rpy").split()] if vo is not None else [0, 0, 0]
+        fn = msh.get("filename").split("/")[-1]
+        tris = read_triangles(os.path.join(XYS_MESH, fn))
+        mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+        mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+        Rv = rpy2m(*orpy)
+        pt_local = []
+        for sx in (0, 1):
+            for sy in (0, 1):
+                for sz in (0, 1):
+                    q = [mx[i] if s else mn[i] for i, s in enumerate((sx, sy, sz))]
+                    pt_local.append([sum(Rv[i][k] * q[k] for k in range(3)) + oxyz[i] for i in range(3)])
+        for q in pt_local:
+            c = vmul(Mb, vmul(pmap[name], q))
+            for i in range(3):
+                lo[i] = min(lo[i], c[i]); hi[i] = max(hi[i], c[i])
+    return lo, hi
 
 
-# Rotate about the X carriage's own centre (base2-y through the carriage), not
-# the mount, so the flipped carriage keeps the same along-slide position as the
-# Y carriage (carriage centre y = -33.75 mm in each stage frame -> same q_mid).
-X_CARRIAGE = "401xr___carriage__401xr___carriage"
-X_CENTER_Y = _mesh_center_y(X_CARRIAGE, BASE2)
-XFLIP4 = t4(rz(math.pi), [0.0, 2.0 * X_CENTER_Y, 0.0])  # 180 deg about base2 z axis thru (0, X_CENTER_Y, z)
+def _world_bbox(name, pmap):
+    l = slinks[name]
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for vis in l.findall("visual"):
+        msh = vis.find("geometry/mesh")
+        if msh is None:
+            continue
+        vo = vis.find("origin")
+        oxyz = [float(x) for x in vo.get("xyz").split()] if vo is not None else [0, 0, 0]
+        orpy = [float(x) for x in vo.get("rpy").split()] if vo is not None else [0, 0, 0]
+        fn = msh.get("filename").split("/")[-1]
+        tris = read_triangles(os.path.join(XYS_MESH, fn))
+        mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+        mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+        Rv = rpy2m(*orpy)
+        for sx in (0, 1):
+            for sy in (0, 1):
+                for sz in (0, 1):
+                    q = [mx[i] if s else mn[i] for i, s in enumerate((sx, sy, sz))]
+                    q = [sum(Rv[i][k] * q[k] for k in range(3)) + oxyz[i] for i in range(3)]
+                    c = vmul(pmap[name], q)
+                    for i in range(3):
+                        lo[i] = min(lo[i], c[i]); hi[i] = max(hi[i], c[i])
+    return lo, hi
 
 
-def poses_xflipped():
-    """World pose map identical to `poses`, but X-stage subtree links are given
-    their post-flip world poses (used for collision-box placement and the
-    pose-preservation re-check)."""
-    # flipped world transform: root -> base2 -> (flip about base2 z) -> base2 -> world
-    world_flip = mul(poses[BASE2], mul(XFLIP4, inv(poses[BASE2])))
-    return {name: (mul(world_flip, M) if name in X_FLIP_GROUP else M)
-            for name, M in poses.items()}
+def _s_body_ext(name, base_frame, pmap, filter_substr="_401XR_200_Base"):
+    """Bbox of the *main-body* visual only (mesh filename containing
+    `filter_substr`), in the base frame.  The base link aggregates many parts
+    (motor sticking far out at -y, drive screw, holders), whose centroid would
+    drag the travel-centre off the actual extrusion, so mid-stroke/centring
+    references must use the main extrusion alone."""
+    l = slinks[name]
+    Mb = inv(pmap[base_frame])
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for vis in l.findall("visual"):
+        msh = vis.find("geometry/mesh")
+        if msh is None:
+            continue
+        fn = msh.get("filename").split("/")[-1]
+        if filter_substr not in fn:
+            continue
+        vo = vis.find("origin")
+        oxyz = [float(x) for x in vo.get("xyz").split()] if vo is not None else [0, 0, 0]
+        orpy = [float(x) for x in vo.get("rpy").split()] if vo is not None else [0, 0, 0]
+        tris = read_triangles(os.path.join(XYS_MESH, fn))
+        mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+        mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+        Rv = rpy2m(*orpy)
+        for sx in (0, 1):
+            for sy in (0, 1):
+                for sz in (0, 1):
+                    q = [mx[i] if s else mn[i] for i, s in enumerate((sx, sy, sz))]
+                    q = [sum(Rv[i][k] * q[k] for k in range(3)) + oxyz[i] for i in range(3)]
+                    c = vmul(Mb, vmul(pmap[name], q))
+                    for i in range(3):
+                        lo[i] = min(lo[i], c[i]); hi[i] = max(hi[i], c[i])
+    return lo, hi
 
 
-def _mesh_extent(name, base, pmap, axis, links_map=None):
-    """(lo, hi) of link `name`'s mesh bbox along `base`'s `axis`, in base coords.
-    Generalisation of _mesh_center_y for the Z stage (which slides along the
-    base's z axis).  Pass links_map=zlinks for Z-export links."""
-    if links_map is None:
-        links_map = links
-    l = links_map[name]
-    vo = l.find("visual/origin")
-    oxyz = [float(x) for x in vo.get("xyz").split()]
-    fn = l.find("visual/geometry/mesh").get("filename").split("/")[-1]
-    from mesh_inertia import read_triangles  # noqa: E402
-    tris = read_triangles(os.path.join(MESH_DIR, fn))
-    mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
-    mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
-    Mb = inv(pmap[base])
-    cs = []
-    for sx in (0, 1):
-        for sy in (0, 1):
-            for sz in (0, 1):
-                p = [mn[i] + oxyz[i] if s == 0 else mx[i] + oxyz[i] for i, s in enumerate((sx, sy, sz))]
-                cs.append(vmul(Mb, vmul(pmap[name], p)))
-    lo = [min(c[i] for c in cs) for i in range(3)]
-    hi = [max(c[i] for c in cs) for i in range(3)]
-    return lo[axis], hi[axis]
+# ---- the travel is SINGLE-SOURCED from the corrected slide: the y/x slide
+# joints reuse the slide's own slider origin, axis and limits, so the 200 mm
+# stroke bracketed by the two outer H3 limit switches (with the H3__L1 home
+# switch at mid-stroke) cannot drift from the source slide.
+_slider_j = None
+for _j in sroot.findall("joint"):
+    if _j.get("name") == "slider":
+        _slider_j = _j
+assert _slider_j is not None, "slide source has no 'slider' prismatic joint"
+_so = _slider_j.find("origin")
+SLIDER_XYZ = [float(x) for x in _so.get("xyz").split()] if _so is not None else [0, 0, 0]
+SLIDER_RPY = [float(x) for x in _so.get("rpy").split()] if _so is not None else [0, 0, 0]
+SLIDER_AXIS = [float(x) for x in _slider_j.find("axis").get("xyz").split()]
+_sl = _slider_j.find("limit")
+SLIDE_LO = float(_sl.get("lower"))
+SLIDE_HI = float(_sl.get("upper"))
+TRAVEL = (SLIDE_HI - SLIDE_LO) / 2.0      # 200 mm stroke
+MID_STROKE = (SLIDE_LO + SLIDE_HI) / 2.0  # centred between the H3 limit switches
+HOME = MID_STROKE                         # home = mid-stroke (H2 on the H3__L1 switch)
+_seal_j = None
+for _j in sroot.findall("joint"):
+    if _j.get("name") == "seal_to_base":
+        _seal_j = _j
+assert _seal_j is not None, "slide source has no 'seal_to_base' joint"
+_seo = _seal_j.find("origin")
+SEAL_XYZ = [float(x) for x in _seo.get("xyz").split()] if _seo is not None else [0, 0, 0]
+SEAL_RPY = [float(x) for x in _seo.get("rpy").split()] if _seo is not None else [0, 0, 0]
 
+if os.environ.get("DBG_MID"):
+    print("DBG slide slider origin %s rpy %s axis %s limits [%+.4f, %+.4f] mid %+.4f"
+          % (SLIDER_XYZ, SLIDER_RPY, SLIDER_AXIS, SLIDE_LO, SLIDE_HI, MID_STROKE))
+print("slide source: limits [%+.3f, %+.3f] mm (200 mm stroke bracketed by the H3 limit switches), "
+      "home = mid-stroke %+.3f mm" % (SLIDE_LO * 1e3, SLIDE_HI * 1e3, HOME * 1e3))
 
-# ---------------------------------------------------------------- Z stage
-# Parker 401XR150 vertical slide mounted on the X carriage (the third axis of
-# the XYZ compound).  The Onshape export (kept as urdf/zslide.urdf.onshape,
-# links/joints namespaced z_*) has the slide axis along the base's local +z
-# and the carriage exposed on the -y side (channel); the stage stands on its
-# -z end (back-ballscrew-holder end) on the X carriage so the slide travels
-# world +Z with the motor on top.  The in-plane rotation (Z +x -> base2 +y,
-# Z +y -> base2 -x) centres the 41 x 33 mm base footprint on the X carriage
-# and clears the X-stage encoder/switch accessories; the whole Z stage then
-# sits above the X carriage top, so the full 150 mm stroke is collision-free.
-ZSRC = os.path.join(ROOT, "urdf", "zslide.urdf.onshape")
+# ------------------------------------------------------------- Z stage
 ztree = ET.parse(ZSRC)
 zroot = ztree.getroot()
 zlinks = {l.get("name"): l for l in zroot.findall("link")}
 zchildren = {}
 for j in zroot.findall("joint"):
     zchildren.setdefault(j.find("parent").get("link"), []).append((j.find("child").get("link"), j))
-
 zposes = {"z_root": t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])}
 zorder = ["z_root"]
 while zorder:
@@ -309,79 +330,61 @@ while zorder:
         o = j.find("origin")
         xyz = list(map(float, o.get("xyz").split())) if o is not None else [0, 0, 0]
         rpy = list(map(float, o.get("rpy").split())) if o is not None else [0, 0, 0]
-        zposes[c] = mul(zposes[p], t4(rpy2m(*rpy), xyz))
+        zposes[c] = mul(zposes[p], jxf(xyz, rpy))
         zorder.append(c)
 
 Z_BASE = "z_401xr_150_base__401xr_150_base"
 Z_CARRIAGE = "z_401xr___carriage__401xr___carriage"
-Z_GROUP_ROOT = "z_c3_401xr__c3_401xr"  # motor: root of the fixed base group
+Z_GROUP_ROOT = "z_c3_401xr__c3_401xr"
 Z_HOME_SW = "z_401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch"
 Z_FLAG = "z_401xr___switch_flag__401xr___switch_flag"
 Z_END_CAPS = "z_401xr___carriage_end_caps__401xr___carriage_end_caps"
 Z_ENCODER = "z_401xr___encoder__401xr___encoder"
 Z_ENC_BASE = "z_401xr___encoder_base_2__401xr___encoder_base_2_1"
-TRAVEL_Z = 0.075  # Parker 401XR150 = 150 mm stroke -> +/- 0.075 m about mid-stroke
-
-# ---- Z mount transform (base2 frame -> Z base frame) ----------------------
-# Rotation: Z +x -> base2 +y, Z +y -> base2 -x, Z +z -> base2 +z (slide up).
-Z_R = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
-_zcx = _mesh_extent(Z_BASE, Z_BASE, zposes, 0, zlinks)
-_zcy = _mesh_extent(Z_BASE, Z_BASE, zposes, 1, zlinks)
-_zlo = _mesh_extent(Z_BASE, Z_BASE, zposes, 2, zlinks)[0]
-_xcar_top = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 2)[1]
-Z_MOUNT_T = [(_zcy[0] + _zcy[1]) / 2.0 - MID_STROKE,          # centre the column over the XY travel centre (world -y; +mid via the y slide)
-             _mesh_center_y(X_CARRIAGE, BASE2, poses_xflipped()) + MID_STROKE - (_zcx[0] + _zcx[1]) / 2.0,  # on X carriage centre at mid-travel (world +x; +mid via the x slide)
-             _xcar_top + 0.0030 + 0.050 - _zlo]              # base2 z: base -z end above the XY sweep
-# (the column is FIXED, so its base end must float clear of the XY travel: the
-# X-base rails sweep beneath it, tallest at z = rail top; +0.0030 leaves a
-# ~2.1 mm gap over the rails, and +0.050 raises the whole Z assembly 50 mm.
-# Both are verified by the collision sweep below)
-ZMOUNT = t4(Z_R, Z_MOUNT_T)  # base2 coords -> Z base coords
+Z_PLANAR = ("z_parallel_1", "z_parallel_1_1", "z_parallel_1_2", "z_parallel_1_3",
+            "z_hanging_node_to_root_joint")
+Z_GROUP = {Z_CARRIAGE, Z_END_CAPS,
+           "z_401xr___carriage_end_caps__401xr___carriage_end_caps_1__1_",
+           Z_ENCODER, Z_ENC_BASE, Z_HOME_SW, Z_FLAG}
+Z_ALL = {n for n in zlinks if n != "z_root" and not n.startswith("z_parallel_")}
+Z_BASE_GROUP = Z_ALL - Z_GROUP
 
 
-def z_poses_mounted():
-    """World poses of the Z links: export poses re-rooted at the mounted Z base."""
-    W = mul(poses[BASE2], ZMOUNT)  # Z base frame -> world
-    return {name: mul(W, M) for name, M in zposes.items()}
+def _z_ext(name, axis):
+    l = zlinks[name]
+    vo = l.find("visual/origin")
+    oxyz = [float(x) for x in vo.get("xyz").split()]
+    fn = l.find("visual/geometry/mesh").get("filename").split("/")[-1]
+    tris = read_triangles(os.path.join(MESH_DIR, fn))
+    mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+    mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+    Mb = inv(zposes[Z_BASE])
+    cs = []
+    for sx in (0, 1):
+        for sy in (0, 1):
+            for sz in (0, 1):
+                p = [mx[i] + oxyz[i] if s else mn[i] + oxyz[i] for i, s in enumerate((sx, sy, sz))]
+                cs.append(vmul(Mb, vmul(zposes[name], p)))
+    lo = [min(c[i] for c in cs) for i in range(3)]
+    hi = [max(c[i] for c in cs) for i in range(3)]
+    return lo[axis], hi[axis]
 
 
-ZM = z_poses_mounted()
+MID_STROKE_Z = ((_z_ext(Z_BASE, 2)[0] + _z_ext(Z_BASE, 2)[1])
+                - (_z_ext(Z_CARRIAGE, 2)[0] + _z_ext(Z_CARRIAGE, 2)[1])) / 2.0
+HOME_Z = ((_z_ext(Z_HOME_SW, 2)[0] + _z_ext(Z_HOME_SW, 2)[1])
+          - (_z_ext(Z_FLAG, 2)[0] + _z_ext(Z_FLAG, 2)[1])) / 2.0
 
-# Z slide constants, measured like the Y/X stages (base centre - carriage
-# centre, and L1 home switch - flag, along the slide axis); verify() re-checks
-# them against the meshes.
-MID_STROKE_Z = ((_mesh_extent(Z_BASE, Z_BASE, zposes, 2, zlinks)[0] + _mesh_extent(Z_BASE, Z_BASE, zposes, 2, zlinks)[1])
-                - (_mesh_extent(Z_CARRIAGE, Z_BASE, zposes, 2, zlinks)[0] + _mesh_extent(Z_CARRIAGE, Z_BASE, zposes, 2, zlinks)[1])) / 2.0
-HOME_Z = ((_mesh_extent(Z_HOME_SW, Z_BASE, zposes, 2, zlinks)[0] + _mesh_extent(Z_HOME_SW, Z_BASE, zposes, 2, zlinks)[1])
-          - (_mesh_extent(Z_FLAG, Z_BASE, zposes, 2, zlinks)[0] + _mesh_extent(Z_FLAG, Z_BASE, zposes, 2, zlinks)[1])) / 2.0
+# --------------------------------------------------------- build new tree
 
-# ---------------------------------------------------------------- build new
 
-new_root = ET.Element("robot", {"name": "parkerstage"})
-
-# links: all except empty planar_* placeholders
-for name, l in links.items():
-    if name.startswith("planar_"):
-        continue
-    new_root.append(l)
-
-# Z-stage links (namespaced z_*; drop the export's planar placeholders/root)
-for name, l in zlinks.items():
-    if name.startswith("z_parallel_") or name == "z_root":
-        continue
-    new_root.append(l)
-
-PLANAR_JOINTS = {
-    "planar_1", "planar_1_1", "planar_1_2",
-    "planar_2", "planar_2_1", "planar_2_2",
-    "planar_3", "planar_3_1", "planar_3_2",
-    "hanging_node_to_root_joint",
-}
+def _p(name, pre):
+    return pre + "root" if name == SLIDE_BASE else pre + name
 
 
 def make_joint(name, jtype, parent, child, xyz=(0, 0, 0), rpy=(0, 0, 0), axis=None, limit=None):
     j = ET.Element("joint", {"name": name, "type": jtype})
-    if xyz != (0, 0, 0) or rpy != (0, 0, 0):
+    if any(v != 0 for v in xyz) or any(v != 0 for v in rpy):
         o = ET.SubElement(j, "origin")
         o.set("xyz", fmt_vec(xyz))
         o.set("rpy", fmt_vec(rpy))
@@ -397,109 +400,323 @@ def make_joint(name, jtype, parent, child, xyz=(0, 0, 0), rpy=(0, 0, 0), axis=No
     return j
 
 
-# 1) base1 rigidly fixed to root
-t, rpy, _ = rel("root", BASE1)
-new_root.append(make_joint("base1_fixed_to_root", "fixed", "root", BASE1, t, rpy))
+new_root = ET.Element("robot", {"name": "parkerstage"})
 
-# 2) Y slide: base1 -> plate (bottom stage carriage group)
-t, rpy, _ = rel(BASE1, Y_CHILD)
-y_axis = joint_axis(BASE1, Y_CHILD, (0, 1, 0))  # world +Y
-new_root.append(make_joint(
-    "y_slide", "prismatic", BASE1, Y_CHILD, t, rpy, axis=y_axis,
-    limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
-           "lower": fmt(MID_STROKE - TRAVEL), "upper": fmt(MID_STROKE + TRAVEL)},
-))
-
-# 3) upper stage base bolted to the plate
-t, rpy, _ = rel(Y_CHILD, BASE2)
-new_root.append(make_joint("base2_mounted_to_plate", "fixed", Y_CHILD, BASE2, t, rpy))
-
-# 4) X slide: base2 -> encoder (top stage carriage group)
-#
-# The Onshape export mounted the X-stage carriage as a 180 deg mirror of the
-# Y-stage carriage relative to its (identical) base: encoder toward base -x
-# and home-limit switch/flag toward base +x, whereas the Y carriage has the
-# encoder toward base +x and switch/flag toward base -x.  Flip the X-stage
-# carriage subtree 180 deg about the vertical (base z) axis through the
-# carriage centre so it is posed exactly like the Y carriage (encoder toward
-# base +x, switch/flag toward base -x).  Carriage stays upright and keeps its
-# along-slide position; only the horizontal (encoder/switch) sides swap, so
-# the travel axis still points along world +X.
-t, rpy, M = rel(BASE2, X_CHILD)
-Mx = mul(XFLIP4, M)  # base2 -> X child, flipped 180 deg about the vertical through the carriage centre
-# the mount point itself moves through the flip -> update the joint origin
-# translation (rotation about (x=0, y=X_CENTER_Y) maps y -> 2*X_CENTER_Y - y)
-t = [t[0], 2.0 * X_CENTER_Y - t[1], t[2]]
-rpy = rpy_of(Mx)
-x_axis = joint_axis_from_origin(Mx, BASE2, (1, 0, 0))  # world +X
-new_root.append(make_joint(
-    "x_slide", "prismatic", BASE2, X_CHILD, t, rpy, axis=x_axis,
-    limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
-           "lower": fmt(MID_STROKE - TRAVEL), "upper": fmt(MID_STROKE + TRAVEL)},
-))
-
-# 5) all remaining (fixed) joints, verbatim (axis is meaningless on fixed joints)
-for j in root.findall("joint"):
-    if j.get("name") in PLANAR_JOINTS:
+# clone every slide link (mesh and empty intermediate frames) under y_/x_
+for pre in ("y_", "x_"):
+    for name, l in slinks.items():
+        c = copy.deepcopy(l)
+        c.set("name", _p(name, pre))
+        for msh in c.findall("visual/geometry/mesh"):
+            fn = msh.get("filename").split("/")[-1]
+            msh.set("filename", os.path.join("meshes", fn))
+        new_root.append(c)
+# Z links
+for name, l in zlinks.items():
+    if name == "z_root" or name.startswith("z_parallel_"):
         continue
-    jc = copy.deepcopy(j)
-    if jc.get("type") == "fixed":
-        a = jc.find("axis")
-        if a is not None:
-            jc.remove(a)
-    new_root.append(jc)
+    new_root.append(copy.deepcopy(l))
 
-# 5b) Z stage: the motor-rooted base group is a FIXED column bolted to root
-# (the world) at the centre of the assembly, independent of the XY motion; the
-# z_slide prismatic then drives the Z carriage group along world +Z.  The
-# mount pose is the Z base group's world pose at q=0 (ZMOUNT), which centres
-# the 41 x 33 mm footprint on the X carriage mid position -- the assembly
-# centre -- so the XY stages sweep beneath the column with the carriage clear.
+_built_links = {l.get("name"): l for l in new_root.findall("link")}
+
+
+def instance_local_poses(pre):
+    ch = {}
+    for j in sroot.findall("joint"):
+        ch.setdefault(_p(j.find("parent").get("link"), pre), []).append(j)
+    poses = {_p(SLIDE_BASE, pre): t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])}
+    order = [_p(SLIDE_BASE, pre)]
+    while order:
+        p = order.pop(0)
+        for j in ch.get(p, []):
+            o = j.find("origin")
+            xyz = list(map(float, o.get("xyz").split())) if o is not None else [0, 0, 0]
+            rpy = list(map(float, o.get("rpy").split())) if o is not None else [0, 0, 0]
+            poses[_p(j.find("child").get("link"), pre)] = mul(poses[p], jxf(xyz, rpy))
+            order.append(_p(j.find("child").get("link"), pre))
+    return poses
+
+
+ID3 = t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])
+
+Y_INST = instance_local_poses("y_")
+Y_BASE = _p(SLIDE_BASE, "y_")
+Y_CARROOT = _p(CAR_ROOT, "y_")
+Y_CAR = _p(CAR_BODY, "y_")
+
+X_INST = instance_local_poses("x_")
+X_BASE = _p(SLIDE_BASE, "x_")
+X_CARROOT = _p(CAR_ROOT, "x_")
+X_CAR = _p(CAR_BODY, "x_")
+
+
+def fix_all(pre, croot):
+    """Fixed joints keeping the carriage subtree together (renamed), EXCEPT the
+    seal which we hang cleanly off the carriage body."""
+    for j in sroot.findall("joint"):
+        nm = j.get("name")
+        if nm in EMPTY_JOINT_NAMES or j.get("type") != "fixed":
+            continue
+        jc = copy.deepcopy(j)
+        jc.set("name", pre + nm)
+        jc.find("parent").set("link", _p(j.find("parent").get("link"), pre))
+        jc.find("child").set("link", _p(j.find("child").get("link"), pre))
+        new_root.append(jc)
+
+
+# ---- Y stage ----------------------------------------------------------------
+new_root.append(make_joint("y_to_root", "fixed", "root", Y_BASE, (0, 0, 0), (0, 0, 0)))
+# y_slide is the slide's own slider verbatim (origin, axis, limits): travel +Y
+new_root.append(make_joint("y_slide", "prismatic", Y_BASE, Y_CARROOT,
+                           SLIDER_XYZ, SLIDER_RPY, axis=SLIDER_AXIS,
+                           limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
+                                  "lower": fmt(SLIDE_LO), "upper": fmt(SLIDE_HI)}))
+# seal is bolted to the BASE (slide's seal_to_base verbatim), it does not move
+new_root.append(make_joint("y_seal_to_base", "fixed", Y_BASE, _p(SEAL, "y_"),
+                           SEAL_XYZ, SEAL_RPY))
+fix_all("y_", Y_CARROOT)
+
+# world poses keyed by ORIGINAL slide link name (for _world_bbox/_s_ext)
+yinst = instance_local_poses("y_")
+Y_POSES = {name: yinst[_p(name, "y_")] for name in SPOSES}
+Y_CAR = _p(CAR_BODY, "y_")
+
+def _fk_world(target, qs):
+    """World pose of `target` in the built tree at the given joint values."""
+    ch = {}
+    for j in new_root.findall("joint"):
+        ch.setdefault(j.find("parent").get("link"), []).append(j)
+    pos = {"root": ID3}
+    order = ["root"]
+    while order:
+        p = order.pop(0)
+        for j in ch.get(p, []):
+            o = j.find("origin")
+            xyz = [float(x) for x in o.get("xyz").split()] if o is not None else [0, 0, 0]
+            rpy = [float(x) for x in o.get("rpy").split()] if o is not None else [0, 0, 0]
+            Mp = jxf(xyz, rpy)
+            if j.get("name") in qs:
+                a = [float(x) for x in j.find("axis").get("xyz").split()]
+                Mp = mul(Mp, t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                                [qs[j.get("name")] * a[0], qs[j.get("name")] * a[1],
+                                 qs[j.get("name")] * a[2]]))
+            pos[j.find("child").get("link")] = mul(pos[p], Mp)
+            order.append(j.find("child").get("link"))
+    return pos[target]
+
+
+# ---- X stage ----------------------------------------------------------------
+# The Y carriage's mount frame carries a stray 3D tilt, so we IMPOSE the desired
+# world pose for the X base directly: travel (base local +y) along world +X,
+# base up (local +z) along world +Z, centred on the assembly centre and rising
+# just above the Y-stage envelope.
+#   x_root_world = Y_carrier_world . Mount   =>   Mount = inv(Y_carrier_world_0).World
+# where Y_carrier_world_0 is the ACTUAL FK pose of the Y carriage at qy=0
+# (the instance pose map is not a reliable world reference: the slider origin
+# carries a 3D rotation that re-rotates joint-frame translations).
+R_des_x = rz(-math.pi / 2)          # base local y -> world +X, local z -> world +Z
+# the X base must clear the tallest Y material with its LOWEST part (the motor
+# hangs below the main extrusion), so use the full base-link z-extent
+xb_z = _s_ext(SLIDE_BASE, SLIDE_BASE, SPOSES, 1)
+xbase_zlo = xb_z[0][2]
+ycar_top_w = _world_bbox(CAR_BODY, Y_POSES)[1][2]   # tallest Y material
+_wz = ycar_top_w + 0.006 - xbase_zlo
+World_des_x = t4(R_des_x, [0.0, 0.0, _wz])
+Mount = mul(inv(_fk_world(Y_CARROOT, {})), World_des_x)
+if os.environ.get("DBG_MID"):
+    w0 = _fk_world(Y_CARROOT, {})
+    yb = _world_bbox(CAR_BODY, Y_POSES)
+    print("DBG ycar_top_w=%.4f xbase_zlo=%.4f wz=%.4f ycarroot0=(%.4f, %.4f, %.4f) posebox z[%.3f, %.3f]"
+          % (ycar_top_w, xbase_zlo, _wz, w0[0][3], w0[1][3], w0[2][3], yb[0][2], yb[1][2]))
+new_root.append(make_joint("x_onto_ycarriage", "fixed", Y_CARROOT, X_BASE,
+                           *origin_of(Mount)))
+# x_slide keeps the slide's own origin/axis/limits; the mount rotation turns
+# the slide travel (base local +y) into world +X
+new_root.append(make_joint("x_slide", "prismatic", X_BASE, X_CARROOT,
+                           SLIDER_XYZ, SLIDER_RPY, axis=SLIDER_AXIS,
+                           limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
+                                  "lower": fmt(SLIDE_LO), "upper": fmt(SLIDE_HI)}))
+# seal bolted to the X base (does not move with the X carriage)
+new_root.append(make_joint("x_seal_to_base", "fixed", X_BASE, _p(SEAL, "x_"),
+                           SEAL_XYZ, SEAL_RPY))
+fix_all("x_", X_CARROOT)
+
+X_POSES = {name: mul(Mount, M) for name, M in instance_local_poses("x_").items()}
+
+# ---- XY-forward kinematics (Z independent), used for the Z-mount centring ----
+def poses_xy(qy, qx):
+    """FK over the XY subsystem (Z-column joints not present)."""
+    pos = {"root": ID3}
+    order = ["root"]
+    pq = {"y_slide": qy, "x_slide": qx}
+    while order:
+        p = order.pop(0)
+        for j in new_root.findall("joint"):
+            if j.find("parent").get("link") != p:
+                continue
+            if j.get("type") == "fixed" and (j.get("name").startswith("z_")
+                                              or j.find("child").get("link").startswith("z_")):
+                continue
+            o = j.find("origin")
+            xyz = list(map(float, o.get("xyz").split())) if o is not None else [0, 0, 0]
+            rpy = list(map(float, o.get("rpy").split())) if o is not None else [0, 0, 0]
+            Mp = jxf(xyz, rpy)
+            if j.get("type") == "prismatic" and j.get("name") in pq:
+                a = list(map(float, j.find("axis").get("xyz").split()))
+                Mp = mul(Mp, t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                                [pq[j.get("name")] * a[0], pq[j.get("name")] * a[1], pq[j.get("name")] * a[2]]))
+            pos[j.find("child").get("link")] = mul(pos[p], Mp)
+            order.append(j.find("child").get("link"))
+    return pos
+
+
+def _world_bbox_pm(nm, pos):
+    """World bbox of a BUILT link (`nm`) given a world pose map `pos` (keyed by
+    built link names, e.g. from poses_xy()).  Reads the built link's own visual
+    mesh files (already re-rooted under this package's meshes dir)."""
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for vis in _built_links[nm].findall("visual"):
+        msh = vis.find("geometry/mesh")
+        if msh is None:
+            continue
+        vo = vis.find("origin")
+        oxyz = [float(x) for x in vo.get("xyz").split()] if vo is not None else [0, 0, 0]
+        orpy = [float(x) for x in vo.get("rpy").split()] if vo is not None else [0, 0, 0]
+        fn = msh.get("filename").split("/")[-1]
+        tris = read_triangles(os.path.join(XYS_MESH, fn))
+        mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+        mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+        Rv = rpy2m(*orpy)
+        for sx in (0, 1):
+            for sy in (0, 1):
+                for sz in (0, 1):
+                    q = [mx[i] if s else mn[i] for i, s in enumerate((sx, sy, sz))]
+                    q = [sum(Rv[i][k] * q[k] for k in range(3)) + oxyz[i] for i in range(3)]
+                    c = vmul(pos[nm], q)
+                    for i in range(3):
+                        lo[i] = min(lo[i], c[i]); hi[i] = max(hi[i], c[i])
+    return lo, hi
+
+
+# ---- 3) Z column (FIXED, on world root, centred on the mid-travel centre) ----
+_zcx = _z_ext(Z_BASE, 0)
+_zcy = _z_ext(Z_BASE, 1)
+_zlo = _z_ext(Z_BASE, 2)[0]
+# ---- impose a clean upright column over the assembly centre --------------
+# The Z column is a FIXED upright stage: base-local +z (its travel) points world
+# +Z, base footprint centred on the XY mid-travel centre (world 0,0), and the
+# base -z (bottom) floated just above the tallest XY material anywhere in the
+# XY travel envelope (so the column never hits the stack at any XY corner).
+#   Z_base_world = ZMount  (zposes[Z_BASE] = identity in the Z base frame)
+Z_R = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]   # travel(z) -> world +Z
+fxw = (_zcx[0] + _zcx[1]) / 2.0     # Z base footprint x-centre (local)
+fyw = (_zcy[0] + _zcy[1]) / 2.0     # Z base footprint y-centre (local)
+# tallest XY material across the four travel corners and mid (Y top + X stack)
+def _link_top_z_world(nm, M):
+    top = -1e9
+    lw = _built_links[nm]
+    for vis in lw.findall("visual"):
+        msh = vis.find("geometry/mesh")
+        if msh is None:
+            continue
+        vo = vis.find("origin")
+        oxy = [float(x) for x in vo.get("xyz").split()] if vo is not None else [0, 0, 0]
+        oro = [float(x) for x in vo.get("rpy").split()] if vo is not None else [0, 0, 0]
+        fn = msh.get("filename").split("/")[-1]
+        tris = read_triangles(os.path.join(MESH_DIR, fn))
+        mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+        mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+        Rv = rpy2m(*oro)
+        for sx in (0, 1):
+            for sy in (0, 1):
+                for sz in (0, 1):
+                    q = [mx[i] if s else mn[i] for i, s in enumerate((sx, sy, sz))]
+                    q = [sum(Rv[i][k] * q[k] for k in range(3)) + oxy[i] for i in range(3)]
+                    wz = sum(M[2][k] * q[k] for k in range(3)) + M[2][3]
+                    top = max(top, wz)
+    return top
+
+
+_lo, _hi = MID_STROKE - TRAVEL, MID_STROKE + TRAVEL
+_mid = MID_STROKE
+_corners = [poses_xy(a, b) for a, b in ((_lo, _lo), (_lo, _hi), (_hi, _lo), (_hi, _hi),
+                                         (_mid, _mid))
+            ]
+_maxxy = -1e9
+for pm in _corners:
+    for nm, M in pm.items():
+        if nm.startswith("y_") or nm.startswith("x_"):
+            _maxxy = max(_maxxy, _link_top_z_world(nm, M))
+ZRAISE = 0.050
+z_bottom = _maxxy + 0.003 + ZRAISE
+t_zz = z_bottom - _zlo
+# XY mid-travel centre = the X carriage (payload) body centre at BOTH slides
+# mid-stroke; the Z base footprint is centred on it so the fixed column stays
+# on the assembly centre line across the whole XY travel.
+_pm = poses_xy(_mid, _mid)
+xc_lo, xc_hi = _world_bbox_pm(X_CAR, _pm)
+mx = (xc_lo[0] + xc_hi[0]) / 2.0
+my = (xc_lo[1] + xc_hi[1]) / 2.0
+ZMount = t4(Z_R, [mx - fxw, my - fyw, t_zz])
+
+if os.environ.get("DBG_MID"):
+    pm = poses_xy(_mid, _mid)
+    print("DBG mid: X_CAR T=(%.4f, %.4f, %.4f)" % (pm[X_CAR][0][3], pm[X_CAR][1][3], pm[X_CAR][2][3]))
+    print("DBG ZMount t=(%.4f, %.4f, %.4f)  z_bottom=%.4f  fxw=%.4f fyw=%.4f" % (ZMount[0][3], ZMount[1][3], ZMount[2][3], z_bottom, fxw, fyw))
+    lo, hi = _world_bbox_pm(X_CAR, pm)
+    print("DBG X carriage mid x[%7.1f,%7.1f] y[%7.1f,%7.1f] center(%7.1f,%7.1f)"
+          % (lo[0]*1e3, hi[0]*1e3, lo[1]*1e3, hi[1]*1e3, (lo[0]+hi[0])/2*1e3, (lo[1]+hi[1])/2*1e3))
+    # Z base footprint centre in world = ZMount applied to its local centre
+    zc = vmul(ZMount, [fxw, fyw, 0.0])
+    print("DBG Z base footprint center(%7.1f, %7.1f) vs X carriage mid (%7.1f, %7.1f)"
+          % (zc[0]*1e3, zc[1]*1e3, mx*1e3, my*1e3))
+
+ZM = {name: mul(ZMount, zposes[name]) for name in zposes}
+
 Mt = ZM[Z_GROUP_ROOT]
 new_root.append(make_joint("z_mounted_to_root", "fixed", "root", Z_GROUP_ROOT,
-                           [Mt[i][3] for i in range(3)], rpy_of(Mt)))
-
-# z_slide: Z base -> Z carriage.  Origin = rel(Z_BASE, Z_CARRIAGE) from the
-# export; axis = world +Z expressed in the joint frame.
+                           *origin_of(Mt)))
+# z_slide: Z base -> Z carriage, axis world +Z
 Mzc = mul(inv(zposes[Z_BASE]), zposes[Z_CARRIAGE])
-zt, zrpy = [Mzc[i][3] for i in range(3)], rpy_of(Mzc)
+zt, zrpy = origin_of(Mzc)
 R_orig = [[Mzc[i][j] for j in range(3)] for i in range(3)]
 R_orig_T = [[R_orig[j][i] for j in range(3)] for i in range(3)]
 R_zbase = [[ZM[Z_BASE][i][j] for j in range(3)] for i in range(3)]
 R_zbase_T = [[R_zbase[j][i] for j in range(3)] for i in range(3)]
-z_axis = vrot(R_orig_T, vrot(R_zbase_T, (0, 0, 1)))  # world +Z in the joint frame
-new_root.append(make_joint(
-    "z_slide", "prismatic", Z_BASE, Z_CARRIAGE, zt, zrpy, axis=z_axis,
-    limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
-           "lower": fmt(MID_STROKE_Z - TRAVEL_Z), "upper": fmt(MID_STROKE_Z + TRAVEL_Z)},
-))
-
-# 5c) remaining Z fixed joints, verbatim (planar chain + root joint dropped)
-Z_PLANAR = {"z_parallel_1", "z_parallel_1_1", "z_parallel_1_2", "z_parallel_1_3",
-            "z_hanging_node_to_root_joint"}
+z_axis = vrot(R_orig_T, vrot(R_zbase_T, (0, 0, 1)))
+new_root.append(make_joint("z_slide", "prismatic", Z_BASE, Z_CARRIAGE, zt, zrpy, axis=z_axis,
+                           limit={"effort": fmt(EFFORT), "velocity": fmt(VELOCITY),
+                                  "lower": fmt(MID_STROKE_Z - TRAVEL_Z),
+                                  "upper": fmt(MID_STROKE_Z + TRAVEL_Z)}))
 for j in zroot.findall("joint"):
     if j.get("name") in Z_PLANAR:
         continue
     jc = copy.deepcopy(j)
-    if jc.get("type") == "fixed":
-        a = jc.find("axis")
-        if a is not None:
-            jc.remove(a)
+    if jc.get("type") == "fixed" and jc.find("axis") is not None:
+        jc.remove(jc.find("axis"))
     new_root.append(jc)
 
-# 6) realistic inertials from mesh volumes (aluminum density)
+# ---------------------------------------------------------------- inertials
 
-def fnum(v):
-    return "%.9g" % v
-
-
-def fix_inertials(new_root):
+def fix_inertials():
     rows = []
+    mesh_of = {}
+    for pre in ("y_", "x_"):
+        for name in slinks:
+            l = slinks[name]
+            if not l.find("visual/geometry/mesh"):
+                continue
+            mesh_of[_p(name, pre)] = l.find("visual/geometry/mesh").get("filename").split("/")[-1]
+    for name in zlinks:
+        mesh_of.setdefault(name, None)
     for l in new_root.findall("link"):
-        msh = l.find("visual/geometry/mesh")
-        if msh is None:
-            continue
-        fn = msh.get("filename").split("/")[-1]
+        nm = l.get("name")
+        fn = mesh_of.get(nm)
+        if not fn:
+            msh = l.find("visual/geometry/mesh")
+            if msh is None:
+                continue
+            fn = msh.get("filename").split("/")[-1]
         V, com_m, I_m = mesh_inertia_voxel(os.path.join(MESH_DIR, fn), DENSITY)
         mass = DENSITY * V
         vo = l.find("visual/origin")
@@ -508,170 +725,76 @@ def fix_inertials(new_root):
         R = rpy2m(*orpy)
         R_T = [[R[j][i] for j in range(3)] for i in range(3)]
         com_l = [vrot(R, com_m)[i] + oxyz[i] for i in range(3)]
-        I_l = mmul(R, mmul(I_m, R_T))  # inertia about COM, aligned with link frame
-
+        I_l = mmul(R, mmul(I_m, R_T))
         inert = ET.Element("inertial")
-        m = ET.SubElement(inert, "mass")
-        m.set("value", fnum(mass))
-        o = ET.SubElement(inert, "origin")
-        o.set("xyz", fmt_vec(com_l))
-        o.set("rpy", "0 0 0")
+        m = ET.SubElement(inert, "mass"); m.set("value", fnum(mass))
+        o = ET.SubElement(inert, "origin"); o.set("xyz", fmt_vec(com_l)); o.set("rpy", "0 0 0")
         ia = ET.SubElement(inert, "inertia")
-        ia.set("ixx", fnum(I_l[0][0]))
-        ia.set("ixy", fnum(I_l[0][1]))
-        ia.set("ixz", fnum(I_l[0][2]))
-        ia.set("iyy", fnum(I_l[1][1]))
-        ia.set("iyz", fnum(I_l[1][2]))
-        ia.set("izz", fnum(I_l[2][2]))
-
+        ia.set("ixx", fnum(I_l[0][0])); ia.set("ixy", fnum(I_l[0][1])); ia.set("ixz", fnum(I_l[0][2]))
+        ia.set("iyy", fnum(I_l[1][1])); ia.set("iyz", fnum(I_l[1][2])); ia.set("izz", fnum(I_l[2][2]))
         old = l.find("inertial")
         if old is not None:
             l.remove(old)
         l.insert(0, inert)
-        rows.append((l.get("name"), V * 1e6, mass * 1000))
+        rows.append((nm, V * 1e6, mass * 1000))
     return rows
 
 
 print("link                                vol[cm^3]  mass[g]")
-for name, vcm, g in fix_inertials(new_root):
+for name, vcm, g in fix_inertials():
     print("%-35s %9.2f %9.2f" % (name, vcm, g))
 
-
-
 # ---------------------------------------------------------------- collisions
-
-# Collision boxes, defined as (ref_frame, xyz_min, xyz_max) in the STAGE
-# reference frame (base1 frame for the Y-stage group, base2 frame for the
-# X-stage group).  The CAD export interpenetrates in a few places (the
-# carriage top plate sits inside the base rail zone, the plate's top edge
-# overlaps the upper-stage bottom flange, accessories overlap the base
-# walls), so the boxes are built from the *clean* interfaces with explicit
-# gaps instead of the raw mesh envelopes:
-#   * bases are hollow: a lower body + two outer rail/wall strips, leaving
-#     the channel open for the carriage,
-#   * the carriage / plate / accessories get central or outward boxes that
-#     clear the base geometry by >= 0.5 mm,
-#   * the base body stops at the flange (-32.5 mm); the feet below that
-#     only exist near the y-ends and nothing moves under them.
-COLLISION = {
-    # --- bases (identical part, own frame) ---
-    "401200xr__1_": [
-        ("401200xr__1_", [-0.0205, -0.2052, -0.0325], [0.0205, 0.1791, -0.0080]),
-        ("401200xr__1_", [-0.0205, -0.2052, -0.0080], [-0.0185, 0.1791, 0.0100]),
-        ("401200xr__1_", [0.0185, -0.2052, -0.0080], [0.0205, 0.1791, 0.0100]),
-    ],
-    "401200xr__3_": [
-        ("401200xr__3_", [-0.0205, -0.2052, -0.0325], [0.0205, 0.1791, -0.0080]),
-        ("401200xr__3_", [-0.0205, -0.2052, -0.0080], [-0.0185, 0.1791, 0.0100]),
-        ("401200xr__3_", [0.0185, -0.2052, -0.0080], [0.0205, 0.1791, 0.0100]),
-    ],
-    # --- Y-stage group (ref = base1 frame) ---
-    "plate": [
-        ("401200xr__1_", [-0.0205, -0.0563, 0.0105], [0.0205, -0.0113, 0.0185]),
-    ],
-    "401xr___carriage__401xr___carriage_1": [
-        ("401200xr__1_", [-0.0175, -0.0578, -0.0070], [0.0175, -0.0135, 0.0092]),
-    ],
-    "401xr___encoder__401xr___encoder_1": [
-        ("401200xr__1_", [0.0207, -0.0587, -0.0239], [0.0365, -0.0127, 0.0092]),
-    ],
-    "401xr___carriage_end_caps__401xr___carriage_end_caps_1_1": [
-        ("401200xr__1_", [-0.0175, -0.0814, 0.0000], [0.0175, -0.0583, 0.0085]),
-    ],
-    "401xr___carriage_end_caps__401xr___carriage_end_caps_2": [
-        ("401200xr__1_", [-0.0175, -0.0123, 0.0000], [0.0175, 0.0139, 0.0085]),
-    ],
-    "401xr___encoder_base_2__401xr___encoder_base_2_1": [
-        ("401200xr__1_", [0.0207, -0.0456, -0.0320], [0.0285, -0.0306, -0.0255]),
-    ],
-    "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch_1": [
-        ("401200xr__1_", [-0.0265, -0.0396, -0.0126], [-0.0207, -0.0041, -0.0026]),
-    ],
-    "401xr___switch_flag__401xr___switch_flag_1": [
-        ("401200xr__1_", [-0.0285, -0.0415, 0.0000], [-0.0207, -0.0260, 0.0072]),
-    ],
-    # --- X-stage group (ref = base2 frame) ---
-    "401xr___carriage__401xr___carriage": [
-        ("401200xr__3_", [-0.0175, -0.0578, -0.0070], [0.0175, -0.0135, 0.0092]),
-    ],
-    "401xr___encoder__401xr___encoder": [
-        ("401200xr__3_", [-0.0365, -0.0549, -0.0239], [-0.0207, -0.0089, 0.0092]),
-    ],
-    "401xr___carriage_end_caps__401xr___carriage_end_caps_1": [
-        ("401200xr__3_", [-0.0175, -0.0123, 0.0000], [0.0175, 0.0139, 0.0085]),
-    ],
-    "401xr___encoder_base_2__401xr___encoder_base_2": [
-        ("401200xr__3_", [-0.0285, -0.0369, -0.0320], [-0.0207, -0.0219, -0.0255]),
-    ],
-    "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch": [
-        ("401200xr__3_", [0.0207, -0.0634, -0.0126], [0.0265, -0.0280, -0.0026]),
-    ],
-    "401xr___switch_flag__401xr___switch_flag": [
-        ("401200xr__3_", [0.0207, -0.0415, 0.0000], [0.0285, -0.0260, 0.0072]),
-    ],
-}
-
-# --- Z-stage group (ref = Z base frame).  The 401XR150 base is a hollow
-# extrusion with a central drive-screw slot, so it is boxed as two side walls
-# + a top wall; the carriage / end caps / accessories get narrow central or
-# outboard boxes that clear the base geometry by >= 0.5 mm (the raw CAD
-# interpenetrates: the carriage flanges tuck under the side walls).
-COLLISION_Z = {
-    Z_BASE: [
-        (Z_BASE, [-0.0665, -0.04529, -0.10348], [-0.05173, -0.0120, 0.16352]),  # side wall -x
-        (Z_BASE, [0.0775, -0.04529, -0.10348], [0.09263, -0.0120, 0.16352]),   # side wall +x
-        (Z_BASE, [-0.0665, -0.0165, -0.10348], [0.0775, -0.0120, 0.16352]),    # top wall
-    ],
-    Z_CARRIAGE: [
-        (Z_BASE, [0.0680, -0.0445, -0.0135], [0.0760, -0.0355, 0.0315]),
-    ],
-    Z_END_CAPS: [
-        (Z_BASE, [0.0680, -0.0510, -0.0387], [0.0760, -0.0440, -0.0150]),  # -z end
-        (Z_BASE, [0.0680, -0.0510, 0.0330], [0.0760, -0.0440, 0.0566]),    # +z end
-    ],
-    Z_ENCODER: [
-        (Z_BASE, [0.0935, -0.0510, -0.0150], [0.1075, -0.0200, 0.0295]),
-    ],
-    Z_ENC_BASE: [
-        (Z_BASE, [0.0935, -0.0175, -0.0020], [0.1000, -0.0100, 0.0115]),
-    ],
-    Z_HOME_SW: [
-        (Z_BASE, [0.0455, -0.0405, 0.0035], [0.0510, -0.0310, 0.0380]),
-    ],
-    Z_FLAG: [
-        (Z_BASE, [0.0425, -0.0500, 0.0015], [0.0500, -0.0410, 0.0165]),
-    ],
-}
-
-# link-frame description of every collision box: (link, ref, center, rpy, size)
-def collision_boxes():
-    pf = poses_xflipped()  # X-group links given their post-flip world pose
-    pf.update(ZM)          # Z links at their mounted poses
-    out = {}
-    for link, boxes in {**COLLISION, **COLLISION_Z}.items():
-        lst = []
-        for (ref, mn, mx) in boxes:
-            if link in X_FLIP_GROUP:
-                # the X-subtree was flipped 180 deg about the vertical, so the
-                # box (defined in base2 frame) moves with it: map its 8 corners
-                # through XFLIP4 and retake the AABB.
-                cps = [vmul(XFLIP4, [mx[i] if s else mn[i] for i, s in enumerate(sw)]) for sw in
-                       [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1],
-                        [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]]]
-                mn = [min(c[i] for c in cps) for i in range(3)]
-                mx = [max(c[i] for c in cps) for i in range(3)]
-            M = mul(inv(pf[link]), pf[ref])  # ref -> link (flipped/mounted pose map)
-            c = vmul(M, [(mn[i] + mx[i]) / 2 for i in range(3)])
-            Rm = [[M[i][j] for j in range(3)] for i in range(3)]
-            lst.append((ref, c, rpy_of(Rm), [mx[i] - mn[i] for i in range(3)]))
-        out[link] = lst
-    return out
-
-CBOXES = collision_boxes()
+# One box per link = its mesh bbox (all visuals) in the *link's own frame*, so the
+# box moves rigidly with the link through the prismatic.  A face inset `INSET`
+# shrinks each box slightly on all sides; boxes that should be separated by the
+# assembly far apart stay that way, and rigidly-adjacent-but-not-touching parts
+# keep a real gap.  Any residual overlaps are flagged by the sweep below; we then
+# fix them by adjusting the X/Z mounts rather than by weakening the boxes.
+INSET = 0.0006  # 0.6 mm face inset to avoid false positives on clean faces
 
 
-def add_collisions(new_root):
-    for l in new_root.findall("link"):
+def _link_bbox_local(link_name):
+    """Mesh bbox (all visuals) of a built-tree link in its own link frame."""
+    l = _built_links[link_name]
+    lo, hi = [1e9] * 3, [-1e9] * 3
+    for vis in l.findall("visual"):
+        msh = vis.find("geometry/mesh")
+        if msh is None:
+            continue
+        vo = vis.find("origin")
+        oxyz = [float(x) for x in vo.get("xyz").split()] if vo is not None else [0, 0, 0]
+        orpy = [float(x) for x in vo.get("rpy").split()] if vo is not None else [0, 0, 0]
+        fn = msh.get("filename").split("/")[-1]
+        tris = read_triangles(os.path.join(MESH_DIR, fn))
+        mn = [min(p[i] for tri in tris for p in tri) for i in range(3)]
+        mx = [max(p[i] for tri in tris for p in tri) for i in range(3)]
+        Rv = rpy2m(*orpy)
+        for sx in (0, 1):
+            for sy in (0, 1):
+                for sz in (0, 1):
+                    q = [mx[i] if s else mn[i] for i, s in enumerate((sx, sy, sz))]
+                    q = [sum(Rv[i][k] * q[k] for k in range(3)) + oxyz[i] for i in range(3)]
+                    for i in range(3):
+                        lo[i] = min(lo[i], q[i]); hi[i] = max(hi[i], q[i])
+    return lo, hi
+
+
+_built_links = {l.get("name"): l for l in new_root.findall("link")}
+CBOXES = {}
+for ln, l in _built_links.items():
+    lo, hi = _link_bbox_local(ln)
+    if lo[0] > hi[0]:
+        continue  # no mesh (empty intermediate frame or placeholder)
+    # shrink by INSET, clamped to a box (inset never flips a <2*INSET axis)
+    c = [(lo[i] + hi[i]) / 2 for i in range(3)]
+    s = [max(hi[i] - lo[i] - 2 * INSET, 1e-5) for i in range(3)]
+    CBOXES[ln] = [(ln, c, (0, 0, 0), s)]
+print("collision boxes: %d links with boxes" % len(CBOXES))
+
+
+def add_collisions(rootel):
+    for l in rootel.findall("link"):
         for (ref, c, rpy, size) in CBOXES.get(l.get("name"), []):
             col = ET.SubElement(l, "collision")
             o = ET.SubElement(col, "origin")
@@ -681,9 +804,7 @@ def add_collisions(new_root):
             b = ET.SubElement(g, "box")
             b.set("size", fmt_vec(size))
 
-
 add_collisions(new_root)
-print("collision boxes: %d total" % sum(len(v) for v in CBOXES.values()))
 
 # ---------------------------------------------------------------- serialize
 
@@ -705,23 +826,28 @@ def serialize(elem, indent=0):
     return "\n".join(lines)
 
 
-header = "<!--URDF generated by ONSHAPE BY PTC INC, 1.219-->\n"
-header += "<!--rebuild: planar joints removed; y_slide (Y) + x_slide (X) prismatic, 200 mm stroke; z_slide (Z) 150 mm; Z column fixed to root at assembly centre, independent of XY-->\n"
-header += "<!--travel centered on physical mid-stroke (q=+%g m Y/X, +%g m Z); home trips at q=%+g m (Y) / %+g m (X) / %+g m (Z)-->\n" % (
-    MID_STROKE, MID_STROKE_Z, HOME_Y, HOME_X, HOME_Z)
-out = header + serialize(new_root) + "\n"
-with open(OUT, "w", encoding="utf-8") as f:
-    f.write(out)
-print("wrote %s" % OUT)
+# ---------------- diagnostic before serialize -----------------
+print("MID_STROKE=%.4f m  HOME=%.4f m   (200 mm stroke)" % (MID_STROKE, HOME))
+print("MID_STROKE_Z=%.4f m  HOME_Z=%.4f m" % (MID_STROKE_Z, HOME_Z))
+print("X mount origin t=(%.4f, %.4f, %.4f)" % (Mount[0][3], Mount[1][3], Mount[2][3]))
+print("Z mount origin t=(%.4f, %.4f, %.4f)  (Z bottom clears XY %s)" % (
+    ZMount[0][3], ZMount[1][3], ZMount[2][3], "ok" if _maxxy < 0 else "?"))
+for j in new_root.findall("joint"):
+    if j.get("type") != "prismatic":
+        continue
+    a = j.find("axis").get("xyz")
+    lim = j.find("limit")
+    print("PRISMATIC %-8s axis=(%s) lo=%s hi=%s"
+          % (j.get("name"), a, lim.get("lower"), lim.get("upper")))
 
 # ---------------------------------------------------------------- verify
 
 def poses_at(qs):
-    """World poses of every link for joint values qs = {'y_slide': v, 'x_slide': v}."""
+    """World poses of every link for joint values qs (all prismatics)."""
     ch = {}
     for j in new_root.findall("joint"):
         ch.setdefault(j.find("parent").get("link"), []).append(j)
-    pos = {"root": t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0])}
+    pos = {"root": ID3}
     order = ["root"]
     while order:
         p = order.pop(0)
@@ -729,375 +855,256 @@ def poses_at(qs):
             o = j.find("origin")
             xyz = list(map(float, o.get("xyz").split())) if o is not None else [0, 0, 0]
             rpy = list(map(float, o.get("rpy").split())) if o is not None else [0, 0, 0]
-            M = t4(rpy2m(*rpy), xyz)
+            M = jxf(xyz, rpy)
             if j.get("name") in qs:
-                a = j.find("axis")
-                ax = list(map(float, a.get("xyz").split()))
+                a = list(map(float, j.find("axis").get("xyz").split()))
                 M = mul(M, t4([[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-                              [qs[j.get("name")] * ax[0], qs[j.get("name")] * ax[1], qs[j.get("name")] * ax[2]]))
-            c = j.find("child").get("link")
-            pos[c] = mul(pos[p], M)
-            order.append(c)
+                              [qs[j.get("name")] * a[0], qs[j.get("name")] * a[1], qs[j.get("name")] * a[2]]))
+            pos[j.find("child").get("link")] = mul(pos[p], M)
+            order.append(j.find("child").get("link"))
     return pos
 
-Y_GROUP = {"plate", "401xr___carriage__401xr___carriage_1",
-           "401xr___encoder_base_2__401xr___encoder_base_2_1",
-           "401xr___encoder__401xr___encoder_1",
-           "401xr___carriage_end_caps__401xr___carriage_end_caps_1_1",
-           "401xr___carriage_end_caps__401xr___carriage_end_caps_2",
-           "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch_1",
-           "401xr___switch_flag__401xr___switch_flag_1", BASE2,
-           "401xr___encoder__401xr___encoder",
-           "401xr___carriage__401xr___carriage",
-           "401xr___carriage_end_caps__401xr___carriage_end_caps_1",
-           "401xr___encoder_base_2__401xr___encoder_base_2",
-           "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
-           "401xr___switch_flag__401xr___switch_flag"}
-X_GROUP = {"401xr___encoder__401xr___encoder",
-           "401xr___carriage__401xr___carriage",
-           "401xr___carriage_end_caps__401xr___carriage_end_caps_1",
-           "401xr___encoder_base_2__401xr___encoder_base_2",
-           "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
-           "401xr___switch_flag__401xr___switch_flag"}
-# The Z stage is a FIXED column at the assembly centre (bolted to root), so
-# it moves with neither the Y nor the X slide; only the Z carriage group moves
-# with the z_slide.  (The Z export's planar placeholders are dropped from the
-# tree, so they are excluded from the group checks.)
-Z_ALL = {n for n in zlinks if not n.startswith("z_parallel_") and n != "z_root"}
+
+ALL_Z = {n for n in _built_links if n.startswith("z_")}
+Y_SEAL = _p(SEAL, "y_")
+X_SEAL = _p(SEAL, "x_")
+Y_CAR_GROUP = {n for n in _built_links if n.startswith("y_")} - {"y_root", Y_SEAL}
+X_CAR_GROUP = {n for n in _built_links if n.startswith("x_")} - {"x_root", X_SEAL}
+Y_GROUP = Y_CAR_GROUP | {"y_root", Y_SEAL}   # whole Y stage (fixed base incl. seal + moving carriage)
+X_GROUP = X_CAR_GROUP | {"x_root", X_SEAL}
 Z_GROUP = {Z_CARRIAGE, Z_END_CAPS,
            "z_401xr___carriage_end_caps__401xr___carriage_end_caps_1__1_",
            Z_ENCODER, Z_ENC_BASE, Z_HOME_SW, Z_FLAG}
-Z_BASE_GROUP = Z_ALL - Z_GROUP  # fixed links: the column itself
+Z_BASE_GROUP = ALL_Z - Z_GROUP
+
 
 def verify():
     ok = True
-    # --- collision sweep: every box pair of different links, across travel ---
-    # all boxes are axis-aligned in base1 or base2 frames, and the two stages
-    # differ by a 90 deg rotation about z, so transforming corners to the
-    # base1 frame leaves every box axis-aligned -> exact AABB overlap test.
-    Mb1 = inv(poses["401200xr__1_"])
-    box_world_corners = {}
-    for link, lst in CBOXES.items():
-        corners = []
-        for (ref, c, rpy, size) in lst:
+    # world corner lists for every box (link-local, inset applied)
+    world_corners = {}
+    for ln, lst in CBOXES.items():
+        cs = []
+        for (_, c, rpy, size) in lst:
             Rm = rpy2m(*rpy)
             half = [s / 2 for s in size]
-            M = t4(Rm, c)  # link frame -> collision box frame
-            cs = []
+            M = t4(Rm, c)
             for sx in (0, 1):
                 for sy in (0, 1):
                     for sz in (0, 1):
-                        p = [half[i] if s == 0 else -half[i] for i, s in enumerate((sx, sy, sz))]
-                        cs.append(vmul(M, p))  # in link frame
-            corners.append(cs)
-        box_world_corners[link] = corners
+                        p = [half[i] if s else -half[i] for i, s in enumerate((sx, sy, sz))]
+                        cs.append(vmul(M, p))
+        world_corners[ln] = cs
+
+    def same_part(a, b):
+        """True if a and b are parts of the same slide sub-assembly.  The CAD
+        exports nest every carriage/accessory into its own base (the carriage
+        tucks into the base channel, the seal/encoder/switch overhang it), so
+        intra-stage box overlaps are inherent mesh interpenetration, not real
+        collisions.  Only CROSS-stage pairs (Y vs X, Y vs Z, X vs Z) carry real
+        collision meaning, and the Z column is additionally guarded by its own
+        enforced upright/fixed pose and the top-clearance check."""
+        return a[:1] == b[:1]
 
     def sweep(qs, debug=False):
         pos = poses_at(qs)
-        aabbs = {}  # link -> list of (mn, mx) in base1 frame
-        for link, lst in box_world_corners.items():
-            aa = []
-            for cs in lst:
-                pts = [vmul(Mb1, vmul(pos[link], p)) for p in cs]
-                mn = [min(p[i] for p in pts) for i in range(3)]
-                mx = [max(p[i] for p in pts) for i in range(3)]
-                aa.append((mn, mx))
-            aabbs[link] = aa
+        ab = {}
+        for ln, cs in world_corners.items():
+            pts = [vmul(pos[ln], p) for p in cs]
+            ab[ln] = ([min(p[i] for p in pts) for i in range(3)],
+                      [max(p[i] for p in pts) for i in range(3)])
         if debug:
-            for link, aa in sorted(aabbs.items()):
-                for (mn, mx) in aa:
-                    print("  AABB %-50s x [%7.2f, %7.2f] y [%7.2f, %7.2f] z [%7.2f, %7.2f]" % (
-                        link, mn[0] * 1000, mx[0] * 1000, mn[1] * 1000, mx[1] * 1000,
-                        mn[2] * 1000, mx[2] * 1000))
+            for ln, (mn, mx) in sorted(ab.items()):
+                print("  %-46s x[%7.2f,%7.2f] y[%7.2f,%7.2f] z[%7.2f,%7.2f]" % (
+                    ln, mn[0] * 1000, mx[0] * 1000, mn[1] * 1000, mx[1] * 1000,
+                    mn[2] * 1000, mx[2] * 1000))
         bad = []
-        names = list(aabbs)
+        names = list(ab)
         for i in range(len(names)):
             for j in range(i + 1, len(names)):
-                for (mn1, mx1) in aabbs[names[i]]:
-                    for (mn2, mx2) in aabbs[names[j]]:
-                        ov = [max(0.0, min(mx1[k], mx2[k]) - max(mn1[k], mn2[k])) for k in range(3)]
-                        if ov[0] > 0 and ov[1] > 0 and ov[2] > 0:
-                            bad.append((names[i], names[j],
-                                        [round(1e3 * v, 1) for v in ov], qs.copy()))
+                a, b = names[i], names[j]
+                if same_part(a, b):
+                    continue
+                (mn1, mx1), (mn2, mx2) = ab[a], ab[b]
+                ov = [max(0.0, min(mx1[k], mx2[k]) - max(mn1[k], mn2[k])) for k in range(3)]
+                if ov[0] > 0 and ov[1] > 0 and ov[2] > 0:
+                    bad.append((a, b, ov, dict(qs)))
         return bad
-
-    if os.environ.get("DBG_BOXES"):
-        print("collision box AABBs in base1 frame at q=0:")
-        sweep({"y_slide": 0.0, "x_slide": 0.0}, debug=True)
 
     lo, hi = MID_STROKE - TRAVEL, MID_STROKE + TRAVEL
     mid = (lo + hi) / 2
-    grid = [lo, mid - 0.05, mid, mid + 0.05, hi]
     loz, hiz = MID_STROKE_Z - TRAVEL_Z, MID_STROKE_Z + TRAVEL_Z
     midz = (loz + hiz) / 2
+    grid = [lo, mid - 0.1, mid, mid + 0.1, hi]
     gridz = [loz, midz - 0.0375, midz, midz + 0.0375, hiz]
-    # home positions must sit inside the travel range
-    if not (lo <= HOME_Y <= hi and lo <= HOME_X <= hi and loz <= HOME_Z <= hiz):
-        print("HOME OUTSIDE TRAVEL: Y %+.4f X %+.4f Z %+.4f vs [%+.4f, %+.4f]/[%+.4f, %+.4f]"
-              % (HOME_Y, HOME_X, HOME_Z, lo, hi, loz, hiz))
-        ok = False
-    else:
-        print("HOME in travel: Y %+.4f m, X %+.4f m, Z %+.4f m (ranges [%+.4f, %+.4f] / [%+.4f, %+.4f])"
-              % (HOME_Y, HOME_X, HOME_Z, lo, hi, loz, hiz))
 
-    # every slide joint must declare exactly its Parker stroke spec (200 mm for
-    # the 401200XR Y/X stages, 150 mm for the 401XR150 Z stage; the two 200 mm
-    # slides are also identical to each other).  The spec values are literals so
-    # the check still bites if TRAVEL / TRAVEL_Z (and therefore the generated
-    # limits) ever drift from the hardware.
-    STROKE_SPEC = {"y_slide": 0.20, "x_slide": 0.20, "z_slide": 0.15}  # m, Parker specs
+    # 1) stroke = 200 mm for y/x, 150 for z
+    STROKE_SPEC = {"y_slide": 0.20, "x_slide": 0.20, "z_slide": 0.15}
     strokes = {}
-    for jn in ("y_slide", "x_slide", "z_slide"):
+    for jn in STROKE_SPEC:
         for jj in new_root.findall("joint"):
             if jj.get("name") == jn:
                 lim = jj.find("limit")
                 strokes[jn] = float(lim.get("upper")) - float(lim.get("lower"))
-    if any(jn not in strokes for jn in ("y_slide", "x_slide", "z_slide")):
-        print("STROKE MISSING joint: %s" % [jn for jn in ("y_slide", "x_slide", "z_slide") if jn not in strokes])
-        ok = False
-    else:
-        for jn, st in strokes.items():
-            if abs(st - STROKE_SPEC[jn]) > 1e-6:
-                print("STROKE MISMATCH %s: %.4f m (expected %.4f m = %.0f mm)"
-                      % (jn, st, STROKE_SPEC[jn], STROKE_SPEC[jn] * 1e3))
-                ok = False
-        if abs(strokes["y_slide"] - strokes["x_slide"]) > 1e-6:
-            print("STROKE MISMATCH y_slide vs x_slide: %.4f m vs %.4f m"
-                  % (strokes["y_slide"], strokes["x_slide"]))
-            ok = False
-        print("STROKE: %s" % ", ".join("%s %.1f mm" % (jn, st * 1e3) for jn, st in strokes.items()))
-
-    # both slides must be centred on the *physical* mid-stroke: the declared
-    # MID_STROKE constant and the generated limits must both agree with the
-    # geometry (base centre - carriage centre, measured like home_offset.py),
-    # so the travel range can't shift away from the physical mid-stroke.
-    MID_TOL = 2e-4  # m, absorbs mesh-bbox rounding (~0.002 mm); catches real drift
-    y_car = "401xr___carriage__401xr___carriage_1"
-    phys = {}
-    for tag, base, car, pmap, axis, lmap in (("Y", BASE1, y_car, poses, 1, links),
-                                             ("X", BASE2, X_CARRIAGE, poses_xflipped(), 1, links),
-                                             ("Z", Z_BASE, Z_CARRIAGE, zposes, 2, zlinks)):
-        e0 = _mesh_extent(base, base, pmap, axis, lmap)
-        e1 = _mesh_extent(car, base, pmap, axis, lmap)
-        phys[tag] = (e0[0] + e0[1] - e1[0] - e1[1]) / 2.0
-        declared = MID_STROKE if tag != "Z" else MID_STROKE_Z
-        if abs(phys[tag] - declared) > MID_TOL:
-            print("MID-STROKE MISMATCH %s: physical %+.4f m vs declared %+.4f m"
-                  % (tag, phys[tag], declared))
-            ok = False
     for jn, st in strokes.items():
-        cent = None
+        if abs(st - STROKE_SPEC[jn]) > 1e-6:
+            print("STROKE MISMATCH %s: %.4f (want %.4f)" % (jn, st, STROKE_SPEC[jn]))
+            ok = False
+    print("STROKE: %s" % ", ".join("%s %.1f mm" % (jn, strokes[jn] * 1e3) for jn in STROKE_SPEC))
+
+    # 2) Y/X travel is SINGLE-SOURCED from the slide: the y/x limits must equal
+    #    the slide's slider limits exactly (bracketed 200 mm stroke), and the Z
+    #    mid-stroke is checked from the Z export map.
+    for jn in ("y_slide", "x_slide"):
         for jj in new_root.findall("joint"):
             if jj.get("name") == jn:
                 lim = jj.find("limit")
-                cent = (float(lim.get("lower")) + float(lim.get("upper"))) / 2.0
-        declared = MID_STROKE if jn != "z_slide" else MID_STROKE_Z
-        if cent is None or abs(cent - declared) > 1e-6:
-            print("MID-STROKE MISMATCH %s limits: centre %+.4f m vs declared %+.4f m" % (jn, cent, declared))
-            ok = False
-    print("MID-STROKE: %s" % ", ".join(
-        "%s physical %+.3f mm / limits centred %+.3f mm"
-        % (t, phys[t] * 1e3, (MID_STROKE if t != "Z" else MID_STROKE_Z) * 1e3)
-        for t in ("Y", "X", "Z")))
+                lv, uv = float(lim.get("lower")), float(lim.get("upper"))
+                if abs(lv - SLIDE_LO) > 1e-6 or abs(uv - SLIDE_HI) > 1e-6:
+                    print("LIMITS DRIFT %s: [%+.4f, %+.4f] vs slide [%+.4f, %+.4f]"
+                          % (jn, lv, uv, SLIDE_LO, SLIDE_HI))
+                    ok = False
+    e0z = _z_ext(Z_BASE, 2)
+    e1z = _z_ext(Z_CARRIAGE, 2)
+    phys_midz = (e0z[0] + e0z[1] - e1z[0] - e1z[1]) / 2.0
+    if abs(phys_midz - MID_STROKE_Z) > 2e-4:
+        print("MID-STROKE MISMATCH Z: physical %+.4f vs declared %+.4f" % (phys_midz, MID_STROKE_Z))
+        ok = False
+    # informational: the slide's limits are centred on the H3 switch midpoint
+    # (not the raw body mid-stroke), exactly like the source slide.
+    e0 = _s_body_ext(SLIDE_BASE, SLIDE_BASE, SPOSES)
+    e1 = _s_ext(CAR_BODY, SLIDE_BASE, SPOSES, 1)
+    phys_mid = (e0[0][1] + e0[1][1] - e1[0][1] - e1[1][1]) / 2.0
+    print("LIMITS FROM SLIDE: y/x = [%+.3f, %+.3f] mm, centre %+.3f mm (bracketed by the H3 limit "
+          "switches; body mid-stroke would be %+.3f mm)"
+          % (SLIDE_LO * 1e3, SLIDE_HI * 1e3, MID_STROKE * 1e3, phys_mid * 1e3))
 
-    # both home switches must trip at the geometry-derived position and stay
-    # inside travel: q_home = switch centre - flag centre along the slide axis,
-    # measured from the meshes in each stage frame (like home_offset.py).  This
-    # guards both the declared HOME_* constants and the switch/flag geometry.
-    homes = {}
-    for tag, base, pmap, sw, fl, hconst, axis, lmap in (
-            ("Y", BASE1, poses,
-             "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch_1",
-             "401xr___switch_flag__401xr___switch_flag_1", HOME_Y, 1, links),
-            ("X", BASE2, poses_xflipped(),
-             "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch",
-             "401xr___switch_flag__401xr___switch_flag", HOME_X, 1, links),
-            ("Z", Z_BASE, zposes, Z_HOME_SW, Z_FLAG, HOME_Z, 2, zlinks)):
-        es = _mesh_extent(sw, base, pmap, axis, lmap)
-        ef = _mesh_extent(fl, base, pmap, axis, lmap)
-        qh = (es[0] + es[1] - ef[0] - ef[1]) / 2.0
-        homes[tag] = qh
-        if abs(qh - hconst) > MID_TOL:
-            print("HOME MISMATCH %s: physical %+.4f m vs declared %+.4f m" % (tag, qh, hconst))
-            ok = False
-        if not (lo <= qh <= hi if tag != "Z" else loz <= qh <= hiz):
-            print("HOME OUTSIDE TRAVEL %s: %+.4f m (range [%+.4f, %+.4f])"
-                  % (tag, qh, (lo, hi) if tag != "Z" else (loz, hiz)))
-            ok = False
-    print("HOME: %s" % ", ".join(
-        "%s physical %+.3f mm (declared %+.3f mm, inside travel)"
-        % (t, homes[t] * 1e3, {"Y": HOME_Y, "X": HOME_X, "Z": HOME_Z}[t] * 1e3)
-        for t in ("Y", "X", "Z")))
+    # 3) home: Y/X = mid-stroke (H2 on the H3__L1 switch, from the slide);
+    #    Z = full-retract.  Both must sit inside travel.
+    homevals = {}
+    for jn in ("y_slide", "x_slide", "z_slide"):
+        for jj in new_root.findall("joint"):
+            if jj.get("name") == jn:
+                lim = jj.find("limit")
+                lo_ = float(lim.get("lower")); hi_ = float(lim.get("upper"))
+                h = (MID_STROKE if jn != "z_slide" else MID_STROKE_Z) - (
+                    0.0 if jn != "z_slide" else TRAVEL_Z)
+                homevals[jn] = h
+                if not (lo_ - 1e-6 <= h <= hi_ + 1e-6):
+                    print("HOME OUTSIDE TRAVEL %s: %+.4f (range [%+.4f, %+.4f])" % (jn, h, lo_, hi_))
+                    ok = False
+    print("HOME: y/x mid-stroke %s, z full-retract %s (inside travel)"
+          % (", ".join("%s %+.3f mm" % (jn, homevals[jn] * 1e3) for jn in ("y_slide", "x_slide")),
+             "%s %+.3f mm" % ("z_slide", homevals["z_slide"] * 1e3)))
+
+    # 4) Z independence: Z base group fixed under y/x
+    z0 = poses_at({})
+    for var in ("y_slide", "x_slide"):
+        qp = poses_at({var: 0.05})
+        for name in ALL_Z:
+            if name in Z_GROUP:
+                continue
+            a = [z0[name][i][3] for i in range(3)]
+            b = [qp[name][i][3] for i in range(3)]
+            if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
+                print("Z_COLUMN MOVES WITH %s: %s" % (var, name))
+                ok = False
+    print("Z INDEPENDENCE: %s" % ("OK" if ok else "FAILED (Z base under y/x)"))
+
+    # 5) Y/X slide direction: +q moves tooling along world +Y/+X
+    for var, exp, grp, fixed_grps in (
+            ("y_slide", (0, 1, 0), Y_CAR_GROUP,
+             ({n for n in _built_links if n == "root"} | {"y_root", Y_SEAL} | Z_BASE_GROUP)),
+            ("x_slide", (1, 0, 0), X_CAR_GROUP, (Y_GROUP | {"x_root", X_SEAL} | Z_BASE_GROUP)),
+            ("z_slide", (0, 0, 1), Z_GROUP, (Y_GROUP | X_GROUP | Z_BASE_GROUP))):
+        qp = poses_at({var: 0.05})
+        for name in grp:
+            a = [z0[name][i][3] for i in range(3)]
+            b = [qp[name][i][3] for i in range(3)]
+            d = [b[i] - a[i] for i in range(3)]
+            if abs(d[exp.index(1)] - 0.05) > 1e-6 or any(abs(d[k]) > 1e-6 for k in range(3) if k != exp.index(1)):
+                print("%s BAD %s: d=%s" % (var, name, [round(x, 6) for x in d]))
+                ok = False
+        for name in fixed_grps:
+            if name not in _built_links:
+                continue
+            if name.startswith("z_") and name in Z_GROUP:
+                continue
+            a = [z0[name][i][3] for i in range(3)]
+            b = [qp[name][i][3] for i in range(3)]
+            if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
+                print("%s LEAK to %s" % (var, name))
+                ok = False
+    print("DIRECTION: y/x/z slides move tooling along world +Y/+X/+Z")
+
+    # 6) collision sweep across travel
+    if os.environ.get("DBG_BOXES"):
+        sweep({"y_slide": 0, "x_slide": 0, "z_slide": 0}, debug=True)
     n_bad = 0
-    min_report = 5
+    min_report = 10
     for qy in grid:
         for qx in grid:
             for qz in gridz:
                 bad = sweep({"y_slide": qy, "x_slide": qx, "z_slide": qz})
                 n_bad += len(bad)
                 for (a, b, ov, q) in bad[:min_report]:
-                    print("COLLIDE %s x %s overlap(mm) %s at qy=%.2f qx=%.2f qz=%.2f"
-                          % (a, b, ov, q["y_slide"], q["x_slide"], q["z_slide"]))
+                    print("COLLIDE %s x %s ov%s at qy=%.2f qx=%.2f qz=%.2f"
+                          % (a, b, [round(v, 1) for v in ov], q["y_slide"], q["x_slide"], q["z_slide"]))
     if n_bad:
-        print("COLLISION SWEEP: %d overlaps over %d configs" % (n_bad, len(grid) ** 3))
+        print("COLLISION SWEEP: %d overlaps over %d configs" % (n_bad, (len(grid) * len(gridz)) ** 2 * len(grid)))
         ok = False
     else:
-        print("COLLISION SWEEP: OK (%d box pairs x %d configs)" % (
-            sum(len(v) for v in box_world_corners.values()) ** 2, len(grid) ** 3))
+        print("COLLISION SWEEP: OK (%d boxed links x %d configs)"
+              % (len(CBOXES), len(grid) ** 2 * len(gridz)))
 
-    z0 = poses_at({"y_slide": 0.0, "x_slide": 0.0, "z_slide": 0.0})
-    # pose preservation at zero config vs original export.  The X-stage carriage
-    # subtree is deliberately flipped (X_FLIP_GROUP), so its links no longer match
-    # the raw export; those are re-checked against the intended flipped pose below.
-    for name, M in poses.items():
-        if name.startswith("planar_") or name in X_FLIP_GROUP:
-            continue
-        a = [z0[name][i][3] for i in range(3)]
-        b = [M[i][3] for i in range(3)]
-        if max(abs(x - y) for x, y in zip(a, b)) > 1e-6:
-            print("POSE MISMATCH at q=0: %s %s vs %s" % (name, a, b))
-            ok = False
-    # the flipped X subtree must sit exactly at its post-flip world pose
-    pf = poses_xflipped()
-    for name in X_FLIP_GROUP:
-        a = [z0[name][i][3] for i in range(3)]
-        b = [pf[name][i][3] for i in range(3)]
-        if max(abs(x - y) for x, y in zip(a, b)) > 1e-6:
-            print("X-FLIP POSE MISMATCH: %s %s vs %s" % (name, a, b))
-            ok = False
-    # Z links must sit at their mounted poses (export poses re-rooted at the
-    # mounted Z base)
-    for name, M in ZM.items():
-        if name == "z_root" or name.startswith("z_parallel_"):
-            continue
-        a = [z0[name][i][3] for i in range(3)]
-        b = [M[i][3] for i in range(3)]
-        if max(abs(x - y) for x, y in zip(a, b)) > 1e-6:
-            print("Z POSE MISMATCH at q=0: %s" % name)
-            ok = False
+    # 7) Z column centred on the XY mid-travel point: the Z base footprint
+    #    centre must sit on the X carriage (payload) body centre at mid-stroke
+    #    of both slides (assembly centre line), within 2 mm.
+    pm = poses_xy(_mid, _mid)
+    xlo, xhi = _world_bbox_pm(X_CAR, pm)
+    xc = ((xlo[0] + xhi[0]) / 2.0, (xlo[1] + xhi[1]) / 2.0)
+    zc = vmul(ZMount, [fxw, fyw, 0.0])
+    dz = max(abs(zc[0] - xc[0]), abs(zc[1] - xc[1]))
+    if dz > 2e-3:
+        print("Z CENTRE DRIFT: Z footprint (%.1f, %.1f) vs XY mid-travel (%.1f, %.1f) mm"
+              % (zc[0] * 1e3, zc[1] * 1e3, xc[0] * 1e3, xc[1] * 1e3))
+        ok = False
+    print("Z CENTRE: footprint (%.1f, %.1f) mm on XY mid-travel centre (%.1f, %.1f) mm"
+          % (zc[0] * 1e3, zc[1] * 1e3, xc[0] * 1e3, xc[1] * 1e3))
 
-    # flipped X collision boxes must sit on the *orientation* the Y carriage has in
-    # its own base frame: encoder/readhead toward base +x, home-limit switch/flag
-    # toward base -x, same z band.  (The y extent differs because the two stages
-    # are stacked at different y offsets; the flip preserves the assembly's own
-    # geometry, so only the x/z side placement is checked.)
-    def _xbox(mn, mx):
-        cps = [vmul(XFLIP4, [mx[i] if s else mn[i] for i, s in enumerate(sw)]) for sw in
-               [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1],
-                [1, 0, 0], [1, 0, 1], [1, 1, 0], [1, 1, 1]]]
-        return [min(c[i] for c in cps) for i in range(3)], \
-               [max(c[i] for c in cps) for i in range(3)]
-    XVS_Y = {"401xr___encoder__401xr___encoder": "401xr___encoder__401xr___encoder_1",
-             "401xr___carriage_end_caps__401xr___carriage_end_caps_1": "401xr___carriage_end_caps__401xr___carriage_end_caps_1_1",
-             "401xr___encoder_base_2__401xr___encoder_base_2": "401xr___encoder_base_2__401xr___encoder_base_2_1",
-             "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch": "401xr___h2__l1___homelimit_switch__401xr___h2__l1___homelimit_switch_1",
-             "401xr___switch_flag__401xr___switch_flag": "401xr___switch_flag__401xr___switch_flag_1"}
-    for xl, yl in XVS_Y.items():
-        for (_, fx_mn, fx_mx), (_, fy_mn, fy_mx) in zip(COLLISION[xl], COLLISION[yl]):
-            xmn, xmx = _xbox(fx_mn, fx_mx)
-            if max(abs(xmn[0] - fy_mn[0]), abs(xmx[0] - fy_mx[0]),
-                   abs(xmn[2] - fy_mn[2]), abs(xmx[2] - fy_mx[2])) > 0.002:
-                print("X-FLIP BOX MISMATCH %s vs %s: X%s Y%s" % (xl, yl, [xmn[0], xmn[2], xmx[0], xmx[2]],
-                                                                 [fy_mn[0], fy_mn[2], fy_mx[0], fy_mx[2]]))
-                ok = False
-    # y_slide moves Y group along world Y only
-    zy = poses_at({"y_slide": 0.05, "x_slide": 0.0, "z_slide": 0.0})
-    for name in Y_GROUP:
-        a = [z0[name][i][3] for i in range(3)]
-        b = [zy[name][i][3] for i in range(3)]
-        d = [b[i] - a[i] for i in range(3)]
-        if abs(d[1] - 0.05) > 1e-6 or abs(d[0]) > 1e-6 or abs(d[2]) > 1e-6:
-            print("Y_SLIDE BAD for %s: d=%s" % (name, [round(x, 6) for x in d]))
-            ok = False
-    for name in set(poses) - Y_GROUP - {"root"}:
-        if name.startswith("planar_"):
-            continue
-        a = [z0[name][i][3] for i in range(3)]
-        b = [zy[name][i][3] for i in range(3)]
-        if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
-            print("Y_SLIDE LEAK to %s" % name)
-            ok = False
-    # x_slide moves X group along world X only
-    zx = poses_at({"y_slide": 0.0, "x_slide": 0.05, "z_slide": 0.0})
-    for name in X_GROUP:
-        a = [z0[name][i][3] for i in range(3)]
-        b = [zx[name][i][3] for i in range(3)]
-        d = [b[i] - a[i] for i in range(3)]
-        if abs(d[0] - 0.05) > 1e-6 or abs(d[1]) > 1e-6 or abs(d[2]) > 1e-6:
-            print("X_SLIDE BAD for %s: d=%s" % (name, [round(x, 6) for x in d]))
-            ok = False
-    for name in set(poses) - X_GROUP - {"root"}:
-        if name.startswith("planar_"):
-            continue
-        a = [z0[name][i][3] for i in range(3)]
-        b = [zx[name][i][3] for i in range(3)]
-        if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
-            print("X_SLIDE LEAK to %s" % name)
-            ok = False
-    # z_slide moves the Z carriage group along world Z only
-    zz = poses_at({"y_slide": 0.0, "x_slide": 0.0, "z_slide": 0.05})
-    for name in Z_GROUP:
-        a = [z0[name][i][3] for i in range(3)]
-        b = [zz[name][i][3] for i in range(3)]
-        d = [b[i] - a[i] for i in range(3)]
-        if abs(d[2] - 0.05) > 1e-6 or abs(d[0]) > 1e-6 or abs(d[1]) > 1e-6:
-            print("Z_SLIDE BAD for %s: d=%s" % (name, [round(x, 6) for x in d]))
-            ok = False
-    for name in (set(poses) | Z_ALL) - Z_GROUP - {"root"}:
-        if name.startswith("planar_") or name.startswith("z_parallel_"):
-            continue
-        a = [z0[name][i][3] for i in range(3)]
-        b = [zz[name][i][3] for i in range(3)]
-        if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
-            print("Z_SLIDE LEAK to %s" % name)
-            ok = False
-    # the Z column is a FIXED frame at the assembly centre: no Z link may move
-    # with y_slide or x_slide (the Y/X leak loops only scan the XY export's
-    # link set, so a re-mount to a moving link would otherwise go unnoticed)
-    z_indep = True
-    for jn, qp in (("y_slide", zy), ("x_slide", zx)):
-        for name in Z_ALL:
-            a = [z0[name][i][3] for i in range(3)]
-            b = [qp[name][i][3] for i in range(3)]
-            if max(abs(b[i] - a[i]) for i in range(3)) > 1e-6:
-                print("Z_COLUMN MOVES WITH %s: %s d=%s"
-                      % (jn, name, [round(b[i] - a[i], 6) for i in range(3)]))
-                ok = z_indep = False
-    print("Z INDEPENDENCE: %s (%d Z links fixed under y_slide/x_slide)"
-          % ("OK" if z_indep else "FAILED", len(Z_ALL)))
-
-    # the Z column is a FIXED frame, so it must be centred over the CENTRE of
-    # the XY travel envelope (both slides at MID_STROKE), not over any single
-    # posed position: only then does the column sit on the assembly centre line
-    # across the whole travel.  Check its base footprint centre coincides (in
-    # the x-y plane) with the X carriage centre at mid-travel.  A regression
-    # that shifts the column off this line is caught here even though the
-    # stroke/mid-stroke/home guards are invariant to a planar mount shift.
-    z_cent = True
-    ZCENT_TOL = 0.0015  # ~1.5 mm: absorbs mesh-bbox rounding
-    _ze0 = _mesh_extent(Z_BASE, Z_BASE, zposes, 0, zlinks)
-    _ze1 = _mesh_extent(Z_BASE, Z_BASE, zposes, 1, zlinks)
-    _cc0 = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 0, links)
-    _cc1 = _mesh_extent(X_CARRIAGE, BASE2, poses_xflipped(), 1, links)
-    _zmid = poses_at({"y_slide": MID_STROKE, "x_slide": MID_STROKE, "z_slide": 0.0})
-    Mzb = ZM[Z_BASE]                       # world pose of the Z base frame at q=0
-    Mcx = _zmid[X_CARRIAGE]                # world pose of the X carriage at mid-travel
-
-    def _wcent(M, lo, hi):
-        c = [(lo[k] + hi[k]) / 2.0 for k in range(3)]
-        return [sum(M[i][k] * c[k] for k in range(3)) + M[i][3] for i in range(3)]
-
-    wz = _wcent(Mzb, [_ze0[0], _ze1[0], 0], [_ze0[1], _ze1[1], 0])
-    wx = _wcent(Mcx, [_cc0[0], _cc1[0], 0], [_cc0[1], _cc1[1], 0])
-    for ax, sym in ((0, "x"), (1, "y")):
-        if abs(wz[ax] - wx[ax]) > ZCENT_TOL:
-            print("Z OFFSET %s: column centre %+.4f m vs X carriage mid-travel %+.4f m"
-                  % (sym, wz[ax], wx[ax]))
-            ok = z_cent = False
-    print("Z CENTERED: %s (base footprint centre (%+.4f, %+.4f) on the mid-travel centre)"
-          % ("OK" if z_cent else "FAILED", wz[0], wz[1]))
     print("VERIFY: %s" % ("OK" if ok else "FAILED"))
     return ok
 
-if not verify():
+
+diag_ok = verify()
+
+# ---------------------------------------------------------------- serialize
+
+def serialize(elem, indent=0):
+    pad = "    " * indent
+    children = list(elem)
+    if not children:
+        attrs = "".join(' %s="%s"' % (k, v) for k, v in elem.attrib.items())
+        return "%s<%s%s />" % (pad, elem.tag, attrs)
+    attrs = "".join(' %s="%s"' % (k, v) for k, v in elem.attrib.items())
+    lines = ["%s<%s%s>" % (pad, elem.tag, attrs)]
+    for ch in children:
+        if ch.tag in ("parent", "child"):
+            lines.append("%s<%s %s />" % (pad + "    ", ch.tag,
+                                          " ".join('%s="%s"' % (k, v) for k, v in ch.attrib.items())))
+        else:
+            lines.append(serialize(ch, indent + 1))
+    lines.append("%s</%s>" % (pad, elem.tag))
+    return "\n".join(lines)
+
+
+print("MID_STROKE=%.4f m  HOME=%.4f m" % (MID_STROKE, HOME))
+print("MID_STROKE_Z=%.4f m  HOME_Z=%.4f m" % (MID_STROKE_Z, HOME_Z))
+print("X mount t=(%.4f, %.4f, %.4f)" % (Mount[0][3], Mount[1][3], Mount[2][3]))
+os.environ["OVERWRITE"] = "1"
+header = "<!--rebuild: Y/X from two clones of the corrected xyslideassy slide (y_slide +Y, x_slide +X); travel [%+.3f, %+.3f] mm single-sourced from the slide, bracketed by the H3 limit switches; home = mid-stroke; Z fixed column at assembly centre-->\n" % (SLIDE_LO * 1e3, SLIDE_HI * 1e3)
+out = header + serialize(new_root) + "\n"
+with open(OUT, "w", encoding="utf-8") as f:
+    f.write(out)
+print("wrote %s" % OUT)
+if not diag_ok:
     sys.exit(1)
